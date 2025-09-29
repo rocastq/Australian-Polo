@@ -8,7 +8,6 @@
 import Testing
 import SwiftUI
 import SwiftData
-@testable import Australian_Polo
 
 @Suite("Australian Polo App Tests")
 struct PoloAppTests {
