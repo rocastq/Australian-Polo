@@ -60,3 +60,33 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Additional iOS/Swift specific ignores
+.DS_Store
+*.xcuserstate
+*.xcworkspace
+project.xcworkspace/
+DerivedData/
+.swiftpm/xcode/
+
+# Swift Package Manager build directory
+/.build
+
+# Dependency directories
+Packages/
+.swiftpm/
+
+# Xcode Patch
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+*.xcworkspace/*
+!*.xcworkspace/contents.xcworkspacedata
+
+# Swift Testing
+.test-results/
+
+# Local environment variables
+.env
+.env.local
