@@ -8,39 +8,72 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Tabs
+
+private enum AppTab: Hashable {
+    case home
+    case tournaments
+    case matches
+    case players
+    case teams
+    case more
+}
+
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var selectedSection: NavigationSection?
+    @State private var selectedTab: AppTab = .home
     
     var body: some View {
-        NavigationSplitView {
-            List(NavigationSection.allCases, id: \.self, selection: $selectedSection) { section in
-                NavigationLink(value: section) {
-                    Label(section.title, systemImage: section.icon)
-                }
+        TabView(selection: $selectedTab) {
+            // Home / Dashboard
+            NavigationStack {
+                HomeDashboardView(selectedTab: $selectedTab)
             }
-            .navigationTitle("Australian Polo")
-        } detail: {
-            if let selectedSection = selectedSection {
-                selectedSection.destination
-            } else {
-                VStack(spacing: 20) {
-                    Image(systemName: "sportscourt")
-                        .font(.system(size: 60))
-                        .foregroundColor(.blue)
-                    Text("Welcome to Australian Polo")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    Text("Select a section from the sidebar to get started")
-                        .foregroundColor(.secondary)
-                }
-                .padding()
+            .tabItem {
+                Label("Home", systemImage: "house.fill")
             }
+            .tag(AppTab.home)
+            
+            // Key sections as primary tabs
+            TournamentListView()
+                .tabItem {
+                    Label("Tournaments", systemImage: "trophy")
+                }
+                .tag(AppTab.tournaments)
+            
+            MatchListView()
+                .tabItem {
+                    Label("Matches", systemImage: "sportscourt")
+                }
+                .tag(AppTab.matches)
+            
+            PlayerListView()
+                .tabItem {
+                    Label("Players", systemImage: "person.2.fill")
+                }
+                .tag(AppTab.players)
+            
+            TeamListView()
+                .tabItem {
+                    Label("Teams", systemImage: "person.3.sequence")
+                }
+                .tag(AppTab.teams)
+            
+            // “More” tab holds the remaining features
+            NavigationStack {
+                MoreView()
+            }
+            .tabItem {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .tag(AppTab.more)
         }
     }
 }
 
-enum NavigationSection: CaseIterable {
+// MARK: - Legacy enum retained for destinations in “More”
+
+enum NavigationSection: CaseIterable, Hashable {
     case users
     case tournaments
     case fields
@@ -80,7 +113,7 @@ enum NavigationSection: CaseIterable {
         case .players: return "person.circle"
         case .breeders: return "figure.equestrian.sports"
         case .horses: return "pawprint"
-        case .matches: return "gamecontroller"
+        case .matches: return "sportscourt"
         case .statistics: return "chart.bar.xaxis"
         }
     }
@@ -102,6 +135,332 @@ enum NavigationSection: CaseIterable {
         }
     }
 }
+
+// MARK: - Home Dashboard
+
+private struct HomeDashboardView: View {
+    @Binding var selectedTab: AppTab
+    
+    // Fetch data and derive the subsets we want to show
+    @Query private var tournaments: [Tournament]
+    @Query(sort: \Match.date, order: .reverse) private var matches: [Match]
+    @Query private var players: [Player]
+    
+    private var upcomingTournaments: [Tournament] {
+        let now = Date()
+        return Array(tournaments
+            .filter { $0.isActive && $0.startDate >= now }
+            .sorted { $0.startDate < $1.startDate }
+            .prefix(3))
+    }
+    
+    private var recentMatches: [Match] {
+        Array(matches.prefix(5))
+    }
+    
+    private var topPlayers: [Player] {
+        Array(players
+            .filter { $0.isActive }
+            .sorted { $0.goalsScored > $1.goalsScored }
+            .prefix(5))
+    }
+    
+    private var activeCounts: (tournaments: Int, pendingMatches: Int, activePlayers: Int) {
+        let t = tournaments.filter { $0.isActive }.count
+        let pending = matches.filter { $0.result == .pending }.count
+        let p = players.filter { $0.isActive }.count
+        return (t, pending, p)
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Welcome
+                HStack(spacing: 12) {
+                    Image(systemName: "sportscourt")
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundColor(.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Australian Polo")
+                            .font(.title2).bold()
+                        Text("Dashboard")
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+                
+                // Quick links to most used sections
+                QuickLinksRow(selectedTab: $selectedTab)
+                    .padding(.horizontal)
+                
+                // Summary tiles
+                HStack(spacing: 12) {
+                    SummaryTile(title: "Active Tournaments", value: "\(activeCounts.tournaments)", color: .orange, icon: "trophy")
+                        .onTapGesture { selectedTab = .tournaments }
+                    SummaryTile(title: "Pending Matches", value: "\(activeCounts.pendingMatches)", color: .blue, icon: "sportscourt")
+                        .onTapGesture { selectedTab = .matches }
+                    SummaryTile(title: "Active Players", value: "\(activeCounts.activePlayers)", color: .green, icon: "person.2.fill")
+                        .onTapGesture { selectedTab = .players }
+                }
+                .padding(.horizontal)
+                
+                // Upcoming Tournaments
+                SectionCard(title: "Upcoming Tournaments",
+                            icon: "calendar",
+                            accent: .orange,
+                            seeAllTitle: "See All",
+                            onSeeAll: { selectedTab = .tournaments }) {
+                    if upcomingTournaments.isEmpty {
+                        EmptyHint(text: "No upcoming tournaments.")
+                    } else {
+                        VStack(spacing: 8) {
+                            ForEach(upcomingTournaments, id: \.id) { t in
+                                NavigationLink {
+                                    TournamentDetailView(tournament: t)
+                                } label: {
+                                    TournamentRowView(tournament: t)
+                                }
+                                .buttonStyle(.plain)
+                                if t.id != upcomingTournaments.last?.id {
+                                    Divider().opacity(0.2)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                
+                // Recent Matches
+                SectionCard(title: "Recent Matches",
+                            icon: "clock.fill",
+                            accent: .blue,
+                            seeAllTitle: "See All",
+                            onSeeAll: { selectedTab = .matches }) {
+                    if recentMatches.isEmpty {
+                        EmptyHint(text: "No matches yet.")
+                    } else {
+                        VStack(spacing: 8) {
+                            ForEach(recentMatches, id: \.id) { m in
+                                NavigationLink {
+                                    MatchDetailView(match: m)
+                                } label: {
+                                    MatchRowView(match: m)
+                                }
+                                .buttonStyle(.plain)
+                                if m.id != recentMatches.last?.id {
+                                    Divider().opacity(0.2)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                
+                // Top Players
+                SectionCard(title: "Top Players",
+                            icon: "star.fill",
+                            accent: .green,
+                            seeAllTitle: "See All",
+                            onSeeAll: { selectedTab = .players }) {
+                    if topPlayers.isEmpty {
+                        EmptyHint(text: "No players yet.")
+                    } else {
+                        VStack(spacing: 8) {
+                            ForEach(topPlayers, id: \.id) { p in
+                                NavigationLink {
+                                    PlayerDetailView(player: p)
+                                } label: {
+                                    PlayerRowView(player: p)
+                                }
+                                .buttonStyle(.plain)
+                                if p.id != topPlayers.last?.id {
+                                    Divider().opacity(0.2)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                
+                Spacer(minLength: 12)
+            }
+            .padding(.bottom, 12)
+        }
+        .navigationTitle("Home")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - More tab
+
+struct MoreView: View {
+    // Exclude the sections that already have their own tab
+    private let moreSections: [NavigationSection] = [
+        .horses, .clubs, .fields, .duties, .breeders, .users, .statistics
+    ]
+    
+    var body: some View {
+        List {
+            Section {
+                ForEach(moreSections, id: \.self) { section in
+                    NavigationLink {
+                        section.destination
+                            .navigationTitle(section.title)
+                    } label: {
+                        Label(section.title, systemImage: section.icon)
+                    }
+                }
+            } header: {
+                Text("Browse")
+            }
+        }
+        .navigationTitle("More")
+    }
+}
+
+// MARK: - UI helpers
+
+private struct SectionCard<Content: View>: View {
+    let title: String
+    let icon: String
+    let accent: Color
+    var seeAllTitle: String? = nil
+    var onSeeAll: (() -> Void)? = nil
+    @ViewBuilder var content: Content
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.headline)
+                    .foregroundStyle(accent)
+                Spacer()
+                if let seeAllTitle, let onSeeAll {
+                    Button(seeAllTitle, action: onSeeAll)
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+            .padding([.top, .horizontal])
+            .padding(.bottom, 8)
+            
+            VStack(alignment: .leading, spacing: 0) {
+                content
+                    .padding(.horizontal)
+                    .padding(.bottom, 12)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+}
+
+private struct SummaryTile: View {
+    let title: String
+    let value: String
+    let color: Color
+    let icon: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(.white.opacity(0.9))
+                Spacer()
+            }
+            Text(value)
+                .font(.title2).bold()
+                .foregroundColor(.white)
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.9))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(
+            LinearGradient(colors: [color.opacity(0.9), color.opacity(0.6)],
+                           startPoint: .topLeading,
+                           endPoint: .bottomTrailing)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct QuickLinksRow: View {
+    @Binding var selectedTab: AppTab
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                QuickLink(icon: "trophy", title: "Tournaments", color: .orange) {
+                    selectedTab = .tournaments
+                }
+                QuickLink(icon: "sportscourt", title: "Matches", color: .blue) {
+                    selectedTab = .matches
+                }
+                QuickLink(icon: "person.2.fill", title: "Players", color: .green) {
+                    selectedTab = .players
+                }
+                QuickLink(icon: "person.3.sequence", title: "Teams", color: .purple) {
+                    selectedTab = .teams
+                }
+                QuickLink(icon: "pawprint", title: "Horses", color: .brown) {
+                    selectedTab = .more
+                }
+                QuickLink(icon: "building.2", title: "Clubs", color: .teal) {
+                    selectedTab = .more
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+private struct QuickLink: View {
+    let icon: String
+    let title: String
+    let color: Color
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(color.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text(title)
+                    .font(.subheadline).bold()
+                    .foregroundColor(.primary)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(.thinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct EmptyHint: View {
+    let text: String
+    var body: some View {
+        HStack {
+            Image(systemName: "info.circle")
+                .foregroundColor(.secondary)
+            Text(text)
+                .foregroundColor(.secondary)
+                .font(.subheadline)
+            Spacer()
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Preview
 
 #Preview {
     ContentView()
