@@ -98,7 +98,7 @@ struct AddPlayerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
-    @State private var handicap: Double = 0.0
+    @State private var handicap: Double = 0
     @Query private var clubs: [Club]
     @Query private var users: [User]
     @State private var selectedClub: Club?
@@ -112,7 +112,7 @@ struct AddPlayerView: View {
                     
                     VStack(alignment: .leading) {
                         Text("Handicap: \(handicap, specifier: "%.1f")")
-                        Slider(value: $handicap, in: -2...10, step: 0.5) {
+                        Slider(value: $handicap, in: -2...10, step: 1) {
                             Text("Handicap")
                         }
                     }
@@ -177,7 +177,7 @@ struct PlayerDetailView: View {
                 
                 VStack(alignment: .leading) {
                     Text("Handicap: \(player.handicap, specifier: "%.1f")")
-                    Slider(value: $player.handicap, in: -2...10, step: 0.5) {
+                    Slider(value: $player.handicap, in: -2...10, step: 1) {
                         Text("Handicap")
                     }
                 }
@@ -292,4 +292,12 @@ struct PlayerDetailView: View {
         .navigationTitle(player.name)
         .navigationBarTitleDisplayMode(.inline)
     }
+}
+
+
+#Preview {
+    ContentView()
+        .modelContainer(for: [
+            Player.self,
+        ], inMemory: true)
 }
