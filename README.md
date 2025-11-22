@@ -1,6 +1,6 @@
-# Polo Manager
+# Australian Polo
 
-A comprehensive iOS and iPadOS application for managing polo tournaments, teams, players, horses, and statistics.
+A comprehensive iOS and iPadOS application for managing polo tournaments, clubs, players, teams, horses, fields, and comprehensive statistics with a modern, streamlined interface.
 
 ## Features
 
@@ -78,11 +78,13 @@ A comprehensive iOS and iPadOS application for managing polo tournaments, teams,
 
 ### Key Features
 - **Universal App**: Optimized for both iPhone and iPad
+- **Modern UI Design**: Liquid glass effects and contemporary design elements
+- **Unified Navigation**: Streamlined 4-tab interface with intelligent grouping
+- **Segmented Organization**: Multi-view tabs for efficient content management
 - **Offline Capability**: Full functionality without internet connection
-- **Search and Filtering**: Advanced search across all data types
-- **Statistics Dashboard**: Real-time analytics and performance metrics
-- **Data Export**: Share statistics and results
-- **Role-based Views**: Different interfaces for different user types
+- **Advanced Statistics**: Comprehensive analytics across all data types
+- **Smart Toolbars**: Context-aware interface elements
+- **Settings Integration**: Centralized settings and administrative features
 
 ## Getting Started
 
@@ -98,9 +100,9 @@ A comprehensive iOS and iPadOS application for managing polo tournaments, teams,
 
 ### Project Structure
 ```
-Sources/
-├── PoloManagerApp.swift          # Main app entry point
-├── ContentView.swift             # Root navigation view
+Australian Polo/
+├── Australian_PoloApp.swift     # Main app entry point
+├── ContentView.swift             # Root navigation with 4-tab structure
 ├── Models/                       # SwiftData models
 │   ├── User.swift
 │   ├── Tournament.swift
@@ -112,42 +114,97 @@ Sources/
 │   ├── Match.swift
 │   ├── Award.swift
 │   └── Duty.swift
-└── Views/                        # SwiftUI views
-    ├── DashboardView.swift       # Main dashboard
-    ├── Tournament/               # Tournament management
-    ├── Team/                     # Team management
-    ├── Player/                   # Player management
-    ├── Horse/                    # Horse management
-    ├── Management/               # Field, Club, Duty management
-    └── StatisticsView.swift      # Analytics and reporting
+└── Views/                        # SwiftUI views organized by feature
+    ├── TournamentViews.swift     # Tournaments & Matches (unified)
+    ├── ClubViews.swift          # Clubs, Players, Teams, Fields, Horses (unified)
+    ├── StatisticsView.swift     # Multi-category analytics
+    ├── UserViews.swift          # User management
+    ├── DutyViews.swift          # Official assignments
+    ├── BreederViews.swift       # Breeder management
+    ├── MatchViews.swift         # Match components
+    ├── PlayerViews.swift        # Player components
+    ├── TeamViews.swift          # Team components
+    ├── FieldViews.swift         # Field components
+    └── HorseViews.swift         # Horse components
 ```
+
+## App Navigation
+
+### Main Interface
+The app features a clean, 4-tab navigation structure:
+
+1. **Home Tab** 🏠
+   - Welcome dashboard with liquid glass design elements
+   - Summary tiles showing active tournaments, pending matches, and active players
+   - Quick access sections for upcoming tournaments, recent matches, and top players
+   - Settings button (⚙️) in top-right for additional features and app settings
+
+2. **Tournaments Tab** 🏆
+   - **Integrated tournament and match management**
+   - Segmented picker to switch between "Tournaments" and "Matches"
+   - Create, view, and manage tournaments
+   - Complete match management with filtering by result (All, Win, Loss, Draw, Pending)
+   - Smart toolbar adapts based on current view (Add Tournament/Add Match)
+
+3. **Clubs Tab** 🏢
+   - **Comprehensive club-related management hub**
+   - 5-way segmented picker: Clubs | Players | Teams | Fields | Horses
+   - All club-related entities organized in one cohesive interface
+   - Unified management for club infrastructure and membership
+   - Dynamic navigation and add buttons based on selected section
+
+4. **Statistics Tab** 📊
+   - **Advanced analytics and reporting**
+   - Multi-category statistics with segmented picker: Matches | Players | Teams | Horses | Tournaments
+   - Performance metrics, trends, and insights
+   - Comprehensive data visualization and analysis tools
+
+### Settings & Additional Features
+Accessed via the settings button (⚙️) in the Home tab:
+
+- **Additional Features**:
+  - User management and profiles
+  - Duty assignments and official coordination
+  - Breeder information and horse lineage
+
+- **App Settings**:
+  - Application preferences and configuration
+  - About information
+  - Help and support
 
 ## Usage
 
-### Dashboard
-The main dashboard provides:
-- Live match updates
-- Today's match schedule
-- Overview statistics
-- Quick access to all management areas
+### Getting Started
+1. **Home Dashboard**: Start here for an overview of current activities and quick navigation
+2. **Tournament Management**: Use the Tournaments tab to create events and manage match schedules
+3. **Club Operations**: Access all club-related functions through the Clubs tab
+4. **Data Analysis**: Review performance and trends in the Statistics tab
+5. **Additional Features**: Access specialized functions through the Settings menu
 
-### Tournament Management
-- Create and manage tournaments
-- Schedule matches
-- Track results and standings
-- Award management
+### Key Workflows
 
-### Team and Player Management
-- Register teams and players
-- Manage rosters and assignments
-- Track performance statistics
-- Handle duty assignments
+#### Tournament & Match Management
+- Navigate to Tournaments tab
+- Switch between "Tournaments" and "Matches" using the segmented picker
+- Create tournaments and schedule matches
+- Track results and manage competition flow
 
-### Horse and Breeder Management
-- Register horses with complete pedigree
-- Track performance across tournaments
-- Manage breeding records
-- Award tracking for equine achievements
+#### Club & Member Management
+- Navigate to Clubs tab
+- Use segmented picker to access: Clubs | Players | Teams | Fields | Horses
+- Manage all aspects of club operations from member registration to facility management
+- Unified interface for comprehensive club administration
+
+#### Performance Analysis
+- Navigate to Statistics tab
+- Select category using segmented picker: Matches | Players | Teams | Horses | Tournaments
+- Review detailed analytics and performance metrics
+- Export data and generate reports
+
+#### Administrative Tasks
+- Tap settings button (⚙️) in Home tab
+- Access user management, duty assignments, and breeder information
+- Configure app settings and preferences
 
 ## Contributing
 
@@ -164,6 +221,22 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Support
 
 For support and questions, please create an issue in the repository.
+
+---
+
+## Recent Updates
+
+### Navigation Architecture Redesign
+- **Streamlined Interface**: Reduced from 6 tabs to 4 main tabs for improved usability
+- **Unified Management**: Related features grouped together (e.g., all club-related entities in one tab)
+- **Settings Integration**: Administrative features moved to accessible settings menu
+- **Modern Design**: Liquid glass effects and contemporary UI elements
+
+### Key Improvements
+- **Tournament + Matches**: Combined into single tab with segmented picker
+- **Clubs Hub**: Unified management for Clubs, Players, Teams, Fields, and Horses
+- **Statistics**: Dedicated tab with comprehensive multi-category analytics
+- **Settings**: Centralized access to Users, Duties, Breeders, and app preferences
 
 ---
 

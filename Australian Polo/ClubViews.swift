@@ -8,42 +8,169 @@
 import SwiftUI
 import SwiftData
 
+enum ClubViewMode: String, CaseIterable {
+    case clubs = "Clubs"
+    case players = "Players"
+    case teams = "Teams"
+    case fields = "Fields"
+    case horses = "Horses"
+}
+
 // MARK: - Club List View
 
 struct ClubListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var clubs: [Club]
+    @Query private var players: [Player]
+    @Query private var teams: [Team]
+    @Query private var fields: [Field]
+    @Query private var horses: [Horse]
     @State private var showingAddClub = false
-    
+    @State private var showingAddPlayer = false
+    @State private var showingAddTeam = false
+    @State private var showingAddField = false
+    @State private var showingAddHorse = false
+    @State private var selectedMode: ClubViewMode = .clubs
+
     var body: some View {
         NavigationView {
-            List {
-                ForEach(clubs.filter { $0.isActive }) { club in
-                    NavigationLink(destination: ClubDetailView(club: club)) {
-                        ClubRowView(club: club)
+            VStack(spacing: 0) {
+                // Mode picker
+                Picker("View Mode", selection: $selectedMode) {
+                    ForEach(ClubViewMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
                 }
-                .onDelete(perform: deleteClubs)
+                .pickerStyle(SegmentedPickerStyle())
+                .padding()
+
+                // Content based on mode
+                switch selectedMode {
+                case .clubs:
+                    List {
+                        ForEach(clubs.filter { $0.isActive }) { club in
+                            NavigationLink(destination: ClubDetailView(club: club)) {
+                                ClubRowView(club: club)
+                            }
+                        }
+                        .onDelete(perform: deleteClubs)
+                    }
+
+                case .players:
+                    List {
+                        ForEach(players.filter { $0.isActive }) { player in
+                            NavigationLink(destination: PlayerDetailView(player: player)) {
+                                PlayerRowView(player: player)
+                            }
+                        }
+                        .onDelete(perform: deletePlayers)
+                    }
+
+                case .teams:
+                    List {
+                        ForEach(teams) { team in
+                            NavigationLink(destination: TeamDetailView(team: team)) {
+                                TeamRowView(team: team)
+                            }
+                        }
+                        .onDelete(perform: deleteTeams)
+                    }
+
+                case .fields:
+                    List {
+                        ForEach(fields.filter { $0.isActive }) { field in
+                            NavigationLink(destination: FieldDetailView(field: field)) {
+                                FieldRowView(field: field)
+                            }
+                        }
+                        .onDelete(perform: deleteFields)
+                    }
+
+                case .horses:
+                    List {
+                        ForEach(horses.filter { $0.isActive }) { horse in
+                            NavigationLink(destination: HorseDetailView(horse: horse)) {
+                                HorseRowView(horse: horse)
+                            }
+                        }
+                        .onDelete(perform: deleteHorses)
+                    }
+                }
             }
-            .navigationTitle("Clubs")
+            .navigationTitle(selectedMode.rawValue)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingAddClub = true }) {
-                        Label("Add Club", systemImage: "plus")
+                    Button(action: {
+                        switch selectedMode {
+                        case .clubs: showingAddClub = true
+                        case .players: showingAddPlayer = true
+                        case .teams: showingAddTeam = true
+                        case .fields: showingAddField = true
+                        case .horses: showingAddHorse = true
+                        }
+                    }) {
+                        Label("Add \(selectedMode.rawValue.dropLast())", systemImage: "plus")
                     }
                 }
             }
             .sheet(isPresented: $showingAddClub) {
                 AddClubView()
             }
+            .sheet(isPresented: $showingAddPlayer) {
+                AddPlayerView()
+            }
+            .sheet(isPresented: $showingAddTeam) {
+                AddTeamView()
+            }
+            .sheet(isPresented: $showingAddField) {
+                AddFieldView()
+            }
+            .sheet(isPresented: $showingAddHorse) {
+                AddHorseView()
+            }
         }
     }
-    
+
     private func deleteClubs(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
                 let club = clubs.filter { $0.isActive }[index]
                 club.isActive = false
+            }
+        }
+    }
+
+    private func deletePlayers(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                let player = players.filter { $0.isActive }[index]
+                player.isActive = false
+            }
+        }
+    }
+
+    private func deleteTeams(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                modelContext.delete(teams[index])
+            }
+        }
+    }
+
+    private func deleteFields(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                let field = fields.filter { $0.isActive }[index]
+                field.isActive = false
+            }
+        }
+    }
+
+    private func deleteHorses(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                let horse = horses.filter { $0.isActive }[index]
+                horse.isActive = false
             }
         }
     }
