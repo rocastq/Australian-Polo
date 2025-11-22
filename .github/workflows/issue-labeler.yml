@@ -1,0 +1,61 @@
+```yaml
+name: Issue Labeler
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Auto-label based on title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title.toLowerCase();
+            const labels = [];
+
+            // Priority labels based on keywords
+            if (title.includes('critical') || title.includes('urgent') || title.includes('crash')) {
+              labels.push('critical');
+            } else if (title.includes('important') || title.includes('security')) {
+              labels.push('high-priority');
+            }
+
+            // Component labels
+            if (title.includes('tournament')) labels.push('tournament');
+            if (title.includes('match')) labels.push('match');
+            if (title.includes('player')) labels.push('player');
+            if (title.includes('team')) labels.push('team');
+            if (title.includes('horse')) labels.push('horse');
+            if (title.includes('club')) labels.push('club');
+            if (title.includes('duty') || title.includes('official')) labels.push('duty');
+            if (title.includes('statistics') || title.includes('stats')) labels.push('statistics');
+            if (title.includes('ui') || title.includes('interface')) labels.push('ui');
+            if (title.includes('ux') || title.includes('experience')) labels.push('ux');
+            if (title.includes('performance') || title.includes('slow')) labels.push('performance');
+            if (title.includes('data') || title.includes('database')) labels.push('data-model');
+            if (title.includes('auth') || title.includes('login')) labels.push('authentication');
+            if (title.includes('security')) labels.push('security');
+            if (title.includes('accessibility') || title.includes('a11y')) labels.push('accessibility');
+            if (title.includes('ipad')) labels.push('ipad');
+            if (title.includes('sync') || title.includes('cloud')) labels.push('sync');
+
+            // Platform labels
+            if (title.includes('ios') || title.includes('iphone')) labels.push('ios');
+            if (title.includes('ipad')) labels.push('ipados');
+            if (title.includes('watch')) labels.push('watchos');
+
+            if (labels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: labels
+              });
+            }
+```

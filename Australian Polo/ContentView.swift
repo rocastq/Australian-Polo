@@ -59,14 +59,12 @@ struct ContentView: View {
                 }
                 .tag(AppTab.teams)
             
-            // “More” tab holds the remaining features
-            NavigationStack {
-                MoreView()
-            }
-            .tabItem {
-                Label("More", systemImage: "ellipsis.circle")
-            }
-            .tag(AppTab.more)
+            // "More" tab holds the remaining features
+            MoreView()
+                .tabItem {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .tag(AppTab.more)
         }
     }
 }
@@ -191,10 +189,7 @@ private struct HomeDashboardView: View {
                 .padding(.horizontal)
                 .padding(.top, 8)
                 
-                // Quick links to most used sections
-                QuickLinksRow(selectedTab: $selectedTab)
-                    .padding(.horizontal)
-                
+              
                 // Summary tiles
                 HStack(spacing: 12) {
                     SummaryTile(title: "Active Tournaments", value: "\(activeCounts.tournaments)", color: .orange, icon: "trophy")
@@ -298,7 +293,7 @@ private struct HomeDashboardView: View {
 struct MoreView: View {
     // Exclude the sections that already have their own tab
     private let moreSections: [NavigationSection] = [
-        .horses, .clubs, .fields, .duties, .breeders, .users, .statistics
+        .users, .fields, .clubs, .duties, .breeders, .horses, .statistics
     ]
     
     var body: some View {
@@ -385,36 +380,6 @@ private struct SummaryTile: View {
                            endPoint: .bottomTrailing)
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-private struct QuickLinksRow: View {
-    @Binding var selectedTab: AppTab
-    
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                QuickLink(icon: "trophy", title: "Tournaments", color: .orange) {
-                    selectedTab = .tournaments
-                }
-                QuickLink(icon: "sportscourt", title: "Matches", color: .blue) {
-                    selectedTab = .matches
-                }
-                QuickLink(icon: "person.2.fill", title: "Players", color: .green) {
-                    selectedTab = .players
-                }
-                QuickLink(icon: "person.3.sequence", title: "Teams", color: .purple) {
-                    selectedTab = .teams
-                }
-                QuickLink(icon: "pawprint", title: "Horses", color: .brown) {
-                    selectedTab = .more
-                }
-                QuickLink(icon: "building.2", title: "Clubs", color: .teal) {
-                    selectedTab = .more
-                }
-            }
-            .padding(.vertical, 4)
-        }
     }
 }
 

@@ -1,0 +1,13 @@
+```yaml
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://github.com/rocastq/Australian-Polo/wiki
+    about: Check our wiki for guides and documentation
+  - name: 💬 Discussions
+    url: https://github.com/rocastq/Australian-Polo/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: 🆘 Support
+    url: https://github.com/rocastq/Australian-Polo/discussions/categories/q-a
+    about: Get help with using the Australian Polo app
+```
