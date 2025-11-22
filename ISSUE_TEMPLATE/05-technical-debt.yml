@@ -1,0 +1,114 @@
+```yaml
+name: 🔨 Technical Debt
+description: Address technical debt or code quality issues
+title: "[TECH DEBT] "
+labels: ["technical-debt", "refactoring", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve code quality and maintainability by identifying technical debt.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What type of technical debt is this?
+      options:
+        - Code Quality
+        - Architecture
+        - Performance
+        - Testing
+        - Documentation
+        - Dependencies
+        - Security
+        - Data Model
+        - Build/Deploy
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the technical debt
+      placeholder: Currently, the [component/module] has the following issues...
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: How does this technical debt affect the project?
+      placeholder: |
+        - Makes it difficult to...
+        - Increases risk of...
+        - Slows down...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Refactoring
+      description: How should we address this technical debt?
+      placeholder: Suggest refactoring approach...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How urgently should this be addressed?
+      options:
+        - Critical (blocking development)
+        - High (affecting multiple features)
+        - Medium (localized issue)
+        - Low (minor improvement)
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected
+    attributes:
+      label: Affected Components
+      description: List the files, classes, or modules affected
+      placeholder: |
+        - File1.swift
+        - Module/Component
+        - Feature area
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: breaking
+    attributes:
+      label: Breaking Changes
+      options:
+        - label: This refactoring would include breaking changes
+        - label: This refactoring requires database migration
+        - label: This refactoring affects public APIs
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and Considerations
+      description: What are the risks of this refactoring?
+      placeholder: Potential risks include...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have identified specific code or components that need refactoring
+          required: true
+        - label: I have described the impact of this technical debt
+          required: true
+        - label: I have proposed a solution or approach
+          required: true
+```

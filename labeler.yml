@@ -1,0 +1,60 @@
+```yaml
+# Auto-label PRs based on changed files
+
+# Data Model
+data-model:
+  - 'Australian Polo/Models.swift'
+  - 'Australian Polo/**/Models/**'
+
+# Views
+ui:
+  - 'Australian Polo/**/*Views.swift'
+  - 'Australian Polo/**/*View.swift'
+
+# Tournament
+tournament:
+  - 'Australian Polo/TournamentViews.swift'
+  - 'Australian Polo/Tournament*'
+
+# Player
+player:
+  - 'Australian Polo/PlayerViews.swift'
+  - 'Australian Polo/Player*'
+
+# Team
+team:
+  - 'Australian Polo/TeamViews.swift'
+  - 'Australian Polo/Team*'
+
+# Match
+match:
+  - 'Australian Polo/MatchViews.swift'
+  - 'Australian Polo/Match*'
+
+# Horse
+horse:
+  - 'Australian Polo/HorseViews.swift'
+  - 'Australian Polo/Horse*'
+
+# Statistics
+statistics:
+  - 'Australian Polo/StatisticsView.swift'
+  - 'Australian Polo/Statistics*'
+
+# Tests
+testing:
+  - 'Australian PoloTests/**'
+  - 'Australian PoloUITests/**'
+
+# Documentation
+documentation:
+  - '**.md'
+  - 'docs/**'
+
+# Configuration
+configuration:
+  - '.github/**'
+  - '*.yml'
+  - '*.yaml'
+  - '.gitignore'
+```
