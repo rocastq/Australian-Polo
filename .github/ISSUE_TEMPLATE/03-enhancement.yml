@@ -1,0 +1,106 @@
+```yaml
+name: 🔧 Enhancement
+description: Suggest an improvement to an existing feature
+title: "[ENHANCEMENT] "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an enhancement! Please describe how we can improve an existing feature.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area of Enhancement
+      description: Which area does this enhancement relate to?
+      options:
+        - User Management
+        - Tournament Management
+        - Match Management
+        - Player Management
+        - Team Management
+        - Horse Management
+        - Duty Management
+        - Statistics & Analytics
+        - Search & Filtering
+        - Performance
+        - Data Management
+        - Security
+        - Accessibility
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: Current Behavior
+      description: Describe how the feature currently works
+      placeholder: Currently, the feature...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed Enhancement
+      description: Describe how you'd like the feature to work instead
+      placeholder: I suggest that the feature should...
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: What benefits would this enhancement provide?
+      placeholder: |
+        - Benefit 1
+        - Benefit 2
+        - Benefit 3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact Level
+      description: How many users would benefit from this enhancement?
+      options:
+        - All users
+        - Most users
+        - Some users
+        - Specific user role only
+        - Power users only
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or References
+      description: Provide examples of similar implementations or references
+      placeholder: Similar features in other apps or screenshots...
+
+  - type: checkboxes
+    id: breaking
+    attributes:
+      label: Breaking Change
+      description: Would this be a breaking change?
+      options:
+        - label: This enhancement would require changes to existing data or workflows
+        - label: This enhancement is backward compatible
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have clearly described the current behavior and proposed enhancement
+          required: true
+```

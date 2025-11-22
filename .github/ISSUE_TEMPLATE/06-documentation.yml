@@ -1,0 +1,100 @@
+```yaml
+name: 📚 Documentation
+description: Improve or add documentation
+title: "[DOCS] "
+labels: ["documentation", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve our documentation!
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Documentation Type
+      description: What type of documentation needs attention?
+      options:
+        - User Documentation
+        - Developer Documentation
+        - API Documentation
+        - Code Comments
+        - README
+        - Contributing Guidelines
+        - Architecture Documentation
+        - Setup/Installation Guide
+        - Tutorial/How-To
+        - Troubleshooting Guide
+    validations:
+      required: true
+
+  - type: dropdown
+    id: action
+    attributes:
+      label: Action Needed
+      description: What needs to be done?
+      options:
+        - Add new documentation
+        - Update existing documentation
+        - Fix incorrect documentation
+        - Improve clarity
+        - Add examples
+        - Add diagrams/visuals
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe what documentation is needed or what needs to be improved
+      placeholder: The [feature/component] needs documentation for...
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: Current Documentation (if applicable)
+      description: Link to or quote the current documentation that needs improvement
+      placeholder: Current documentation says... or can be found at...
+
+  - type: textarea
+    id: suggested
+    attributes:
+      label: Suggested Content
+      description: If applicable, provide suggested content or outline
+      placeholder: |
+        Suggested documentation should include:
+        1. Overview
+        2. Usage examples
+        3. Common pitfalls
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Target Audience
+      description: Who is this documentation for?
+      multiple: true
+      options:
+        - End Users
+        - Administrators
+        - New Contributors
+        - Experienced Developers
+        - Designers
+        - Project Managers
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing documentation issues
+          required: true
+        - label: I have clearly described what documentation is needed
+          required: true
+```

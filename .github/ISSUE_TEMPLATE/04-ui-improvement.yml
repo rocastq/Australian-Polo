@@ -1,0 +1,116 @@
+```yaml
+name: 🎨 UI/UX Improvement
+description: Suggest improvements to the user interface or user experience
+title: "[UI/UX] "
+labels: ["ui", "ux", "design", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a UI/UX improvement!
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Improvement Type
+      description: What type of UI/UX improvement is this?
+      options:
+        - Visual Design
+        - Layout/Spacing
+        - Navigation
+        - Accessibility
+        - User Flow
+        - Consistency
+        - Performance/Loading
+        - Feedback/Messaging
+        - Color/Theming
+        - Typography
+    validations:
+      required: true
+
+  - type: input
+    id: screen
+    attributes:
+      label: Screen/View Affected
+      description: Which screen or view does this relate to?
+      placeholder: "e.g., Tournament List, Match Detail, Player Profile"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: Current Design Issue
+      description: Describe the current UI/UX issue or pain point
+      placeholder: Currently, the [screen/element] is difficult to use because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: Describe how you'd like to improve the UI/UX
+      placeholder: The interface should instead...
+    validations:
+      required: true
+
+  - type: textarea
+    id: mockups
+    attributes:
+      label: Mockups or Examples
+      description: Provide mockups, screenshots, or examples
+      placeholder: Drag and drop images or provide links...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Which platform is affected?
+      multiple: true
+      options:
+        - iPhone (all sizes)
+        - iPhone Pro Max/Plus
+        - iPhone SE/Mini
+        - iPad
+        - iPad Pro
+        - Dark Mode
+        - Light Mode
+    validations:
+      required: true
+
+  - type: textarea
+    id: accessibility
+    attributes:
+      label: Accessibility Considerations
+      description: How would this improvement affect accessibility?
+      placeholder: This change would improve accessibility by...
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this improvement?
+      options:
+        - High (major usability issue)
+        - Medium (noticeable improvement)
+        - Low (polish/refinement)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have provided visual examples or detailed descriptions
+          required: true
+        - label: This improvement maintains consistency with the rest of the app
+          required: true
+```
