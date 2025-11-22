@@ -8,42 +8,109 @@
 import SwiftUI
 import SwiftData
 
+enum TournamentViewMode: String, CaseIterable {
+    case tournaments = "Tournaments"
+    case matches = "Matches"
+}
+
 // MARK: - Tournament List View
 
 struct TournamentListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var tournaments: [Tournament]
+    @Query(sort: \Match.date, order: .reverse) private var matches: [Match]
     @State private var showingAddTournament = false
-    
+    @State private var showingAddMatch = false
+    @State private var selectedMode: TournamentViewMode = .tournaments
+    @State private var selectedMatchResult: MatchResult?
+
+    private var filteredMatches: [Match] {
+        if let selectedResult = selectedMatchResult {
+            return matches.filter { $0.result == selectedResult }
+        }
+        return matches
+    }
+
     var body: some View {
         NavigationView {
-            List {
-                ForEach(tournaments.filter { $0.isActive }) { tournament in
-                    NavigationLink(destination: TournamentDetailView(tournament: tournament)) {
-                        TournamentRowView(tournament: tournament)
+            VStack(spacing: 0) {
+                // Mode picker
+                Picker("View Mode", selection: $selectedMode) {
+                    ForEach(TournamentViewMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
                 }
-                .onDelete(perform: deleteTournaments)
+                .pickerStyle(SegmentedPickerStyle())
+                .padding()
+
+                // Content based on mode
+                switch selectedMode {
+                case .tournaments:
+                    List {
+                        ForEach(tournaments.filter { $0.isActive }) { tournament in
+                            NavigationLink(destination: TournamentDetailView(tournament: tournament)) {
+                                TournamentRowView(tournament: tournament)
+                            }
+                        }
+                        .onDelete(perform: deleteTournaments)
+                    }
+
+                case .matches:
+                    List {
+                        Picker("Filter by Result", selection: $selectedMatchResult) {
+                            Text("All Matches").tag(MatchResult?.none)
+                            ForEach(MatchResult.allCases, id: \.self) { result in
+                                Text(result.rawValue).tag(MatchResult?.some(result))
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        .padding(.vertical, 8)
+
+                        ForEach(filteredMatches) { match in
+                            NavigationLink(destination: MatchDetailView(match: match)) {
+                                MatchRowView(match: match)
+                            }
+                        }
+                        .onDelete(perform: deleteMatches)
+                    }
+                }
             }
-            .navigationTitle("Tournaments")
+            .navigationTitle(selectedMode.rawValue)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingAddTournament = true }) {
-                        Label("Add Tournament", systemImage: "plus")
+                    Button(action: {
+                        if selectedMode == .tournaments {
+                            showingAddTournament = true
+                        } else {
+                            showingAddMatch = true
+                        }
+                    }) {
+                        Label("Add \(selectedMode.rawValue.dropLast())", systemImage: "plus")
                     }
                 }
             }
             .sheet(isPresented: $showingAddTournament) {
                 AddTournamentView()
             }
+            .sheet(isPresented: $showingAddMatch) {
+                AddMatchView()
+            }
         }
     }
-    
+
     private func deleteTournaments(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
                 let tournament = tournaments.filter { $0.isActive }[index]
                 tournament.isActive = false
+            }
+        }
+    }
+
+    private func deleteMatches(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                modelContext.delete(filteredMatches[index])
             }
         }
     }
