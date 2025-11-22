@@ -10,51 +10,47 @@ import SwiftData
 
 // MARK: - Statistics View
 
+enum StatisticsCategory: String, CaseIterable {
+    case matches = "Matches"
+    case players = "Players"
+    case teams = "Teams"
+    case horses = "Horses"
+    case tournaments = "Tournaments"
+}
+
 struct StatisticsView: View {
     @Query private var matches: [Match]
     @Query private var players: [Player]
     @Query private var teams: [Team]
     @Query private var horses: [Horse]
     @Query private var tournaments: [Tournament]
-    @State private var selectedTab = 0
-    
+    @State private var selectedCategory: StatisticsCategory = .matches
+
     var body: some View {
         NavigationView {
-            TabView(selection: $selectedTab) {
-                // Match Statistics
-                MatchStatisticsView(matches: matches)
-                    .tabItem {
-                        Label("Matches", systemImage: "gamecontroller")
+            VStack(spacing: 0) {
+                // Category picker
+                Picker("Statistics Category", selection: $selectedCategory) {
+                    ForEach(StatisticsCategory.allCases, id: \.self) { category in
+                        Text(category.rawValue).tag(category)
                     }
-                    .tag(0)
-                
-                // Player Statistics
-                PlayerStatisticsView(players: players)
-                    .tabItem {
-                        Label("Players", systemImage: "person.circle")
-                    }
-                    .tag(1)
-                
-                // Team Statistics
-                TeamStatisticsView(teams: teams)
-                    .tabItem {
-                        Label("Teams", systemImage: "person.3.sequence")
-                    }
-                    .tag(2)
-                
-                // Horse Statistics
-                HorseStatisticsView(horses: horses)
-                    .tabItem {
-                        Label("Horses", systemImage: "pawprint")
-                    }
-                    .tag(3)
-                
-                // Tournament Statistics
-                TournamentStatisticsView(tournaments: tournaments)
-                    .tabItem {
-                        Label("Tournaments", systemImage: "trophy")
-                    }
-                    .tag(4)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding()
+
+                // Content based on selection
+                switch selectedCategory {
+                case .matches:
+                    MatchStatisticsView(matches: matches)
+                case .players:
+                    PlayerStatisticsView(players: players)
+                case .teams:
+                    TeamStatisticsView(teams: teams)
+                case .horses:
+                    HorseStatisticsView(horses: horses)
+                case .tournaments:
+                    TournamentStatisticsView(tournaments: tournaments)
+                }
             }
             .navigationTitle("Statistics")
         }

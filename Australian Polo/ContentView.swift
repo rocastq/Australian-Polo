@@ -13,10 +13,8 @@ import SwiftData
 private enum AppTab: Hashable {
     case home
     case tournaments
-    case matches
-    case players
-    case teams
-    case more
+    case clubs
+    case statistics
 }
 
 struct ContentView: View {
@@ -33,38 +31,25 @@ struct ContentView: View {
                 Label("Home", systemImage: "house.fill")
             }
             .tag(AppTab.home)
-            
+
             // Key sections as primary tabs
             TournamentListView()
                 .tabItem {
                     Label("Tournaments", systemImage: "trophy")
                 }
                 .tag(AppTab.tournaments)
-            
-            MatchListView()
+
+            ClubListView()
                 .tabItem {
-                    Label("Matches", systemImage: "sportscourt")
+                    Label("Clubs", systemImage: "house.and.flag.fill")
                 }
-                .tag(AppTab.matches)
-            
-            PlayerListView()
+                .tag(AppTab.clubs)
+
+            StatisticsView()
                 .tabItem {
-                    Label("Players", systemImage: "person.2.fill")
+                    Label("Statistics", systemImage: "chart.bar.xaxis")
                 }
-                .tag(AppTab.players)
-            
-            TeamListView()
-                .tabItem {
-                    Label("Teams", systemImage: "person.3.sequence")
-                }
-                .tag(AppTab.teams)
-            
-            // "More" tab holds the remaining features
-            MoreView()
-                .tabItem {
-                    Label("More", systemImage: "ellipsis.circle")
-                }
-                .tag(AppTab.more)
+                .tag(AppTab.statistics)
         }
     }
 }
@@ -138,6 +123,7 @@ enum NavigationSection: CaseIterable, Hashable {
 
 private struct HomeDashboardView: View {
     @Binding var selectedTab: AppTab
+    @State private var showingSettings = false
     
     // Fetch data and derive the subsets we want to show
     @Query private var tournaments: [Tournament]
@@ -172,17 +158,13 @@ private struct HomeDashboardView: View {
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: 30) {
                 // Welcome
                 HStack(spacing: 12) {
-                    Image(systemName: "sportscourt")
-                        .font(.system(size: 36, weight: .bold))
-                        .foregroundColor(.blue)
+                  
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Australian Polo")
-                            .font(.title2).bold()
-                        Text("Dashboard")
-                            .foregroundColor(.secondary)
+                            .font(.largeTitle).bold()
                     }
                     Spacer()
                 }
@@ -192,19 +174,21 @@ private struct HomeDashboardView: View {
               
                 // Summary tiles
                 HStack(spacing: 12) {
-                    SummaryTile(title: "Active Tournaments", value: "\(activeCounts.tournaments)", color: .orange, icon: "trophy")
+                    SummaryTile(title: "Active Tournaments", value: "\(activeCounts.tournaments)", color: .accent, icon: "trophy")
                         .onTapGesture { selectedTab = .tournaments }
-                    SummaryTile(title: "Pending Matches", value: "\(activeCounts.pendingMatches)", color: .blue, icon: "sportscourt")
-                        .onTapGesture { selectedTab = .matches }
-                    SummaryTile(title: "Active Players", value: "\(activeCounts.activePlayers)", color: .green, icon: "person.2.fill")
-                        .onTapGesture { selectedTab = .players }
+                    SummaryTile(title: "Pending Matches", value: "\(activeCounts.pendingMatches)", color: .accent, icon: "sportscourt")
+                        .onTapGesture { selectedTab = .tournaments }
+                    SummaryTile(title: "Active Players", value: "\(activeCounts.activePlayers)", color: .accent, icon: "person.2.fill")
+                        .onTapGesture { selectedTab = .clubs }
                 }
+                
                 .padding(.horizontal)
+                
                 
                 // Upcoming Tournaments
                 SectionCard(title: "Upcoming Tournaments",
                             icon: "calendar",
-                            accent: .orange,
+                            accent: .accent,
                             seeAllTitle: "See All",
                             onSeeAll: { selectedTab = .tournaments }) {
                     if upcomingTournaments.isEmpty {
@@ -230,9 +214,9 @@ private struct HomeDashboardView: View {
                 // Recent Matches
                 SectionCard(title: "Recent Matches",
                             icon: "clock.fill",
-                            accent: .blue,
+                            accent: .accent,
                             seeAllTitle: "See All",
-                            onSeeAll: { selectedTab = .matches }) {
+                            onSeeAll: { selectedTab = .tournaments }) {
                     if recentMatches.isEmpty {
                         EmptyHint(text: "No matches yet.")
                     } else {
@@ -256,9 +240,9 @@ private struct HomeDashboardView: View {
                 // Top Players
                 SectionCard(title: "Top Players",
                             icon: "star.fill",
-                            accent: .green,
+                            accent: .accent,
                             seeAllTitle: "See All",
-                            onSeeAll: { selectedTab = .players }) {
+                            onSeeAll: { selectedTab = .clubs }) {
                     if topPlayers.isEmpty {
                         EmptyHint(text: "No players yet.")
                     } else {
@@ -283,35 +267,59 @@ private struct HomeDashboardView: View {
             }
             .padding(.bottom, 12)
         }
-        .navigationTitle("Home")
+        //.navigationTitle("Home")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    showingSettings = true
+                }) {
+                    Image(systemName: "gearshape.fill")
+                        .foregroundColor(.primary)
+                }
+            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
     }
 }
 
-// MARK: - More tab
+// MARK: - Settings View
 
-struct MoreView: View {
-    // Exclude the sections that already have their own tab
-    private let moreSections: [NavigationSection] = [
-        .users, .fields, .clubs, .duties, .breeders, .horses, .statistics
+struct SettingsView: View {
+    // Additional sections previously in More tab
+    private let additionalSections: [NavigationSection] = [
+        .users, .duties, .breeders
     ]
-    
+
     var body: some View {
-        List {
-            Section {
-                ForEach(moreSections, id: \.self) { section in
-                    NavigationLink {
-                        section.destination
-                            .navigationTitle(section.title)
-                    } label: {
-                        Label(section.title, systemImage: section.icon)
+        NavigationView {
+            List {
+                Section {
+                    ForEach(additionalSections, id: \.self) { section in
+                        NavigationLink {
+                            section.destination
+                                .navigationTitle(section.title)
+                        } label: {
+                            Label(section.title, systemImage: section.icon)
+                        }
                     }
+                } header: {
+                    Text("Additional Features")
                 }
-            } header: {
-                Text("Browse")
+
+                Section {
+                    Label("App Settings", systemImage: "gearshape")
+                    Label("About", systemImage: "info.circle")
+                    Label("Help", systemImage: "questionmark.circle")
+                } header: {
+                    Text("Settings")
+                }
             }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .navigationTitle("More")
     }
 }
 
@@ -357,29 +365,69 @@ private struct SummaryTile: View {
     let value: String
     let color: Color
     let icon: String
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: icon)
-                    .foregroundColor(.white.opacity(0.9))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(color)
                 Spacer()
             }
-            Text(value)
-                .font(.title2).bold()
-                .foregroundColor(.white)
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.9))
+
+            Spacer()
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.title.bold())
+                    .foregroundStyle(.primary)
+
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(
-            LinearGradient(colors: [color.opacity(0.9), color.opacity(0.6)],
-                           startPoint: .topLeading,
-                           endPoint: .bottomTrailing)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 100)
+        .background {
+            ZStack {
+                // Base glass background with blur
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.ultraThinMaterial)
+
+                // Subtle color tint overlay
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                color.opacity(0.00),
+                                color.opacity(0.00),
+                                .clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+
+                // Glass highlight border for that liquid glass shine
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(0.05),
+                                .white.opacity(0.05),
+                                .clear,
+                                .white.opacity(0.0)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .shadow(color: .black.opacity(0.05), radius: 12, x: 0, y: 6)
+        .shadow(color: color.opacity(0.05), radius: 8, x: 0, y: 2)
     }
 }
 
