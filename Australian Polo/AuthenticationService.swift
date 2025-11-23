@@ -61,7 +61,7 @@ class AuthenticationManager: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
 
-    private let baseURL = "https://your-backend-url.com/api" // Replace with your backend URL
+    private let baseURL = "http://13.236.118.154:3000/api" // Backend server URL
     private let keychain = KeychainManager()
 
     init() {
@@ -122,19 +122,9 @@ class AuthenticationManager: ObservableObject {
 
     @MainActor
     func refreshToken() async {
-        guard let refreshToken = keychain.getRefreshToken() else { return }
-
-        do {
-            let response: AuthResponse = try await performRequest(
-                endpoint: "/auth/refresh",
-                method: "POST",
-                body: ["refreshToken": refreshToken]
-            )
-
-            await handleAuthenticationSuccess(response)
-        } catch {
-            await logout() // If refresh fails, logout user
-        }
+        // TODO: Implement refresh token logic when backend endpoint is available
+        // For now, logout user when token expires
+        await logout()
     }
 
     // MARK: - Private Methods

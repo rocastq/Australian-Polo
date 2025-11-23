@@ -107,7 +107,7 @@ class ApiService {
     private init() {}
 
    //Add Url of local Backend
-    let baseUrl = "http://backendURL/api"
+    let baseUrl = "http://13.236.118.154:3000/api"
 
     private func makeURL(_ path: String) -> URL? {
         return URL(string: baseUrl + path)
