@@ -20,6 +20,12 @@ struct RegisterRequest: Codable {
     let name: String
     let email: String
     let password: String
+}
+
+struct RegisterRequestFull: Codable {
+    let name: String
+    let email: String
+    let password: String
     let role: UserRole
     let phoneNumber: String?
     let dateOfBirth: Date?
@@ -28,9 +34,13 @@ struct RegisterRequest: Codable {
 
 struct AuthResponse: Codable {
     let token: String
-    let user: UserProfile
-    let refreshToken: String?
-    let expiresIn: TimeInterval
+    let user: BackendUser
+}
+
+struct BackendUser: Codable {
+    let id: Int
+    let name: String
+    let email: String
 }
 
 struct UserProfile: Codable, Identifiable {
@@ -144,25 +154,51 @@ class AuthenticationManager: ObservableObject {
 
     private func handleAuthenticationSuccess(_ response: AuthResponse) async {
         authToken = response.token
-        currentUser = response.user
+        // Convert BackendUser to UserProfile for UI compatibility
+        currentUser = UserProfile(
+            id: UUID(),
+            name: response.user.name,
+            email: response.user.email,
+            role: .user, // Default role, can be updated later
+            createdAt: Date(),
+            lastLoginAt: Date(),
+            isActive: true,
+            isEmailVerified: true,
+            phoneNumber: nil,
+            dateOfBirth: nil,
+            nationality: nil
+        )
         isAuthenticated = true
 
         // Store in keychain
         keychain.storeToken(response.token)
-        if let refreshToken = response.refreshToken {
-            keychain.storeRefreshToken(refreshToken)
-        }
 
-        if let userData = try? JSONEncoder().encode(response.user) {
+        if let userData = try? JSONEncoder().encode(currentUser) {
             keychain.storeUserProfile(userData)
         }
     }
 
     private func handleError(_ error: Error) -> String {
+        print("Authentication Error: \(error)")
+
         if let apiError = error as? APIError {
             return apiError.message
         }
-        return "An unexpected error occurred. Please try again."
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet:
+                return "No internet connection. Please check your network."
+            case .timedOut:
+                return "Request timed out. Please try again."
+            case .cannotConnectToHost:
+                return "Cannot connect to server. Please check your connection."
+            default:
+                return "Network error: \(urlError.localizedDescription)"
+            }
+        }
+
+        return "Error: \(error.localizedDescription)"
     }
 
     private func performRequest<T: Codable, U: Codable>(
@@ -172,8 +208,12 @@ class AuthenticationManager: ObservableObject {
     ) async throws -> U {
 
         guard let url = URL(string: baseURL + endpoint) else {
+            print("Invalid URL: \(baseURL + endpoint)")
             throw APIError.invalidURL
         }
+
+        print("Making request to: \(url)")
+        print("Method: \(method)")
 
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -187,13 +227,23 @@ class AuthenticationManager: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
 
         if let body = body {
-            request.httpBody = try encoder.encode(body)
+            let bodyData = try encoder.encode(body)
+            request.httpBody = bodyData
+            if let bodyString = String(data: bodyData, encoding: .utf8) {
+                print("Request body: \(bodyString)")
+            }
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
+            print("Invalid response type")
             throw APIError.invalidResponse
+        }
+
+        print("Response status code: \(httpResponse.statusCode)")
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("Response data: \(responseString)")
         }
 
         if httpResponse.statusCode >= 400 {
@@ -209,7 +259,13 @@ class AuthenticationManager: ObservableObject {
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(U.self, from: data)
+
+        do {
+            return try decoder.decode(U.self, from: data)
+        } catch {
+            print("JSON decode error: \(error)")
+            throw APIError.invalidResponse
+        }
     }
 }
 
