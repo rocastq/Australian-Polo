@@ -144,7 +144,7 @@ class ApiService {
     private init() {}
 
    //Add Url of local Backend
-    let baseUrl = "http://localhost:3000/api"
+    let baseUrl = "http://13.236.118.154:3000/api"
 
     private func makeURL(_ path: String) -> URL? {
         return URL(string: baseUrl + path)
@@ -390,8 +390,8 @@ class ApiService {
     // MARK: - Award APIs
     func getAllAwards() async throws -> [AwardDTO] {
         guard let url = makeURL("/awards") else { throw URLError(.badURL) }
-        let (response, _): (PaginatedResponse<AwardDTO>, HTTPURLResponse) = try await request(url)
-        return response.data
+        let (dtos, _): ([AwardDTO], HTTPURLResponse) = try await request(url)
+        return dtos
     }
 
     func createAward(title: String, description: String?, entityType: String?, entityId: Int?) async throws -> AwardDTO {
@@ -418,8 +418,8 @@ class ApiService {
     // MARK: - Match APIs
     func getMatchesByTournament(tournamentId: Int) async throws -> [MatchDTO] {
         guard let url = makeURL("/matches/tournament/\(tournamentId)") else { throw URLError(.badURL) }
-        let (response, _): (PaginatedResponse<MatchDTO>, HTTPURLResponse) = try await request(url)
-        return response.data
+        let (dtos, _): ([MatchDTO], HTTPURLResponse) = try await request(url)
+        return dtos
     }
 
     func getMatch(id: Int) async throws -> MatchDTO {
