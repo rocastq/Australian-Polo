@@ -130,9 +130,9 @@ struct TournamentListView: View {
                 // Call API to delete tournament
                 Task {
                     do {
-                        if let tournamentId = tournament.id.hashValue as? Int {
-                            try await ApiService.shared.deleteTournament(id: tournamentId)
-                        }
+                        // TODO: Implement proper UUID to backend ID mapping
+                        let tournamentId = abs(tournament.id.hashValue)
+                        try await ApiService.shared.deleteTournament(id: tournamentId)
                     } catch {
                         print("Failed to delete tournament from API: \(error.localizedDescription)")
                     }

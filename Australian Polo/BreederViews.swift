@@ -69,9 +69,9 @@ struct BreederListView: View {
 
                 Task {
                     do {
-                        if let breederId = breeder.id.hashValue as? Int {
-                            try await ApiService.shared.deleteBreeder(id: breederId)
-                        }
+                        // TODO: Implement proper UUID to backend ID mapping
+                        let breederId = abs(breeder.id.hashValue)
+                        try await ApiService.shared.deleteBreeder(id: breederId)
                     } catch {
                         print("Failed to delete breeder from API: \(error.localizedDescription)")
                     }

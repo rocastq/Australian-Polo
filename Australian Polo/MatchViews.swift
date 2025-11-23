@@ -87,7 +87,8 @@ struct MatchListView: View {
 
                 Task {
                     do {
-                        let matchId = match.id.hashValue
+                        // TODO: Implement proper UUID to backend ID mapping
+                        let matchId = abs(match.id.hashValue)
                         try await ApiService.shared.deleteMatch(id: matchId)
                     } catch {
                         print("Failed to delete match from API: \(error.localizedDescription)")
@@ -263,9 +264,9 @@ struct AddMatchView: View {
 
                 // Call API to create match
                 let matchDTO = try await ApiService.shared.createMatch(
-                    tournamentId: tournament.id.hashValue,
-                    team1Id: homeTeam.id.hashValue,
-                    team2Id: awayTeam.id.hashValue,
+                    tournamentId: abs(tournament.id.hashValue),
+                    team1Id: abs(homeTeam.id.hashValue),
+                    team2Id: abs(awayTeam.id.hashValue),
                     scheduledTime: scheduledTime
                 )
 
