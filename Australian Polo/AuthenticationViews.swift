@@ -432,11 +432,7 @@ struct RegistrationView: View {
         let registerRequest = RegisterRequest(
             name: name,
             email: email,
-            password: password,
-            role: selectedRole,
-            phoneNumber: phoneNumber.isEmpty ? nil : phoneNumber,
-            dateOfBirth: dateOfBirth,
-            nationality: nationality.isEmpty ? nil : nationality
+            password: password
         )
 
         Task {
