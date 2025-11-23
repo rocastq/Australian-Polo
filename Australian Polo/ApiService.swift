@@ -100,6 +100,43 @@ struct CreateOrUpdateMatchRequest: Codable {
     let result: String?
 }
 
+// MARK: - API Error
+
+struct APIError: LocalizedError {
+    let statusCode: Int
+    let message: String
+
+    var errorDescription: String? {
+        return message
+    }
+}
+
+struct ErrorResponse: Codable {
+    let status: String?
+    let message: String
+    let error: ErrorDetail?
+
+    struct ErrorDetail: Codable {
+        let statusCode: Int?
+        let isOperational: Bool?
+        let status: String?
+    }
+}
+
+// MARK: - Paginated Response
+
+struct PaginatedResponse<T: Codable>: Codable {
+    let data: [T]
+    let pagination: Pagination?
+
+    struct Pagination: Codable {
+        let page: Int
+        let limit: Int
+        let total: Int
+        let totalPages: Int
+    }
+}
+
 // MARK: - API Service
 
 class ApiService {
@@ -123,20 +160,58 @@ class ApiService {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
 
+        print("📤 API Request: \(method) \(url.absoluteString)")
+        if let bodyData = body, let bodyString = String(data: bodyData, encoding: .utf8) {
+            print("📦 Request Body: \(bodyString)")
+        }
+
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
+        }
+
+        print("📥 API Response Status: \(http.statusCode)")
+        if let raw = String(data: data, encoding: .utf8) {
+            print("📄 Response Data: \(raw)")
+        }
+
+        guard (200...299).contains(http.statusCode) else {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ API Error (\(http.statusCode)): \(errorMessage)")
+
+            // Try to parse backend error response
+            if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                throw APIError(statusCode: http.statusCode, message: errorResponse.message)
+            }
+
+            // Fallback to generic error
+            throw APIError(statusCode: http.statusCode, message: "Server returned status code \(http.statusCode)")
         }
 
         do {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let decoded = try decoder.decode(T.self, from: data)
+            print("✅ Successfully decoded \(T.self)")
             return (decoded, http)
         } catch {
-            print("Decoding Error for \(T.self):", error)
+            print("❌ Decoding Error for \(T.self):", error)
             if let raw = String(data: data, encoding: .utf8) {
-                print("Raw JSON:", raw)
+                print("📄 Raw JSON that failed to decode:", raw)
+            }
+            if let decodingError = error as? DecodingError {
+                switch decodingError {
+                case .keyNotFound(let key, let context):
+                    print("❌ Key '\(key.stringValue)' not found:", context.debugDescription)
+                case .typeMismatch(let type, let context):
+                    print("❌ Type mismatch for type '\(type)':", context.debugDescription)
+                case .valueNotFound(let type, let context):
+                    print("❌ Value not found for type '\(type)':", context.debugDescription)
+                case .dataCorrupted(let context):
+                    print("❌ Data corrupted:", context.debugDescription)
+                @unknown default:
+                    print("❌ Unknown decoding error")
+                }
             }
             throw error
         }
@@ -158,8 +233,8 @@ class ApiService {
     // MARK: - Tournament APIs
     func getAllTournaments() async throws -> [TournamentDTO] {
         guard let url = makeURL("/tournaments") else { throw URLError(.badURL) }
-        let (dtos, _): ([TournamentDTO], HTTPURLResponse) = try await request(url)
-        return dtos
+        let (response, _): (PaginatedResponse<TournamentDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
     }
 
     func getTournament(id: Int) async throws -> TournamentDTO {
@@ -203,8 +278,8 @@ class ApiService {
     // MARK: - Team APIs
     func getAllTeams() async throws -> [TeamDTO] {
         guard let url = makeURL("/teams") else { throw URLError(.badURL) }
-        let (dtos, _): ([TeamDTO], HTTPURLResponse) = try await request(url)
-        return dtos
+        let (response, _): (PaginatedResponse<TeamDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
     }
 
     func createTeam(name: String, coach: String?) async throws -> TeamDTO {
@@ -231,8 +306,8 @@ class ApiService {
     // MARK: - Player APIs
     func getAllPlayers() async throws -> [PlayerDTO] {
         guard let url = makeURL("/players") else { throw URLError(.badURL) }
-        let (dtos, _): ([PlayerDTO], HTTPURLResponse) = try await request(url)
-        return dtos
+        let (response, _): (PaginatedResponse<PlayerDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
     }
 
     func createPlayer(name: String, teamId: Int?, position: String?) async throws -> PlayerDTO {
@@ -259,8 +334,8 @@ class ApiService {
     // MARK: - Horse APIs
     func getAllHorses() async throws -> [HorseDTO] {
         guard let url = makeURL("/horses") else { throw URLError(.badURL) }
-        let (dtos, _): ([HorseDTO], HTTPURLResponse) = try await request(url)
-        return dtos
+        let (response, _): (PaginatedResponse<HorseDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
     }
 
     func createHorse(name: String, pedigree: [String: String]?, breederId: Int?) async throws -> HorseDTO {
@@ -287,8 +362,8 @@ class ApiService {
     // MARK: - Breeder APIs
     func getAllBreeders() async throws -> [BreederDTO] {
         guard let url = makeURL("/breeders") else { throw URLError(.badURL) }
-        let (dtos, _): ([BreederDTO], HTTPURLResponse) = try await request(url)
-        return dtos
+        let (response, _): (PaginatedResponse<BreederDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
     }
 
     func createBreeder(name: String, contactInfo: String?) async throws -> BreederDTO {

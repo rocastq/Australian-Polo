@@ -15,7 +15,9 @@ struct MatchListView: View {
     @Query(sort: \Match.date, order: .reverse) private var matches: [Match]
     @State private var showingAddMatch = false
     @State private var selectedResult: MatchResult?
-    
+    @State private var isLoadingMatches = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             List {
@@ -27,7 +29,7 @@ struct MatchListView: View {
                 }
                 .pickerStyle(SegmentedPickerStyle())
                 .padding(.vertical, 8)
-                
+
                 ForEach(filteredMatches) { match in
                     NavigationLink(destination: MatchDetailView(match: match)) {
                         MatchRowView(match: match)
@@ -46,20 +48,51 @@ struct MatchListView: View {
             .sheet(isPresented: $showingAddMatch) {
                 AddMatchView()
             }
+            .onAppear {
+                fetchMatches()
+            }
         }
     }
-    
+
     private var filteredMatches: [Match] {
         if let selectedResult = selectedResult {
             return matches.filter { $0.result == selectedResult }
         }
         return matches
     }
-    
+
+    private func fetchMatches() {
+        isLoadingMatches = true
+        Task {
+            do {
+                // Note: API doesn't have getAllMatches, only getMatchesByTournament
+                // You may need to fetch matches per tournament or add getAllMatches to API
+                await MainActor.run {
+                    isLoadingMatches = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingMatches = false
+                    errorMessage = "Failed to fetch matches: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func deleteMatches(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                modelContext.delete(filteredMatches[index])
+                let match = filteredMatches[index]
+                modelContext.delete(match)
+
+                Task {
+                    do {
+                        let matchId = match.id.hashValue
+                        try await ApiService.shared.deleteMatch(id: matchId)
+                    } catch {
+                        print("Failed to delete match from API: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -141,20 +174,22 @@ struct AddMatchView: View {
     @State private var selectedAwayTeam: Team?
     @State private var selectedTournament: Tournament?
     @State private var selectedField: Field?
-    
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("Match Information")) {
                     DatePicker("Date & Time", selection: $date)
-                    
+
                     Picker("Home Team", selection: $selectedHomeTeam) {
                         Text("Select Home Team").tag(Team?.none)
                         ForEach(teams, id: \.id) { team in
                             Text(team.name).tag(Team?.some(team))
                         }
                     }
-                    
+
                     Picker("Away Team", selection: $selectedAwayTeam) {
                         Text("Select Away Team").tag(Team?.none)
                         ForEach(teams.filter { $0.id != selectedHomeTeam?.id }, id: \.id) { team in
@@ -162,7 +197,7 @@ struct AddMatchView: View {
                         }
                     }
                 }
-                
+
                 Section(header: Text("Associations")) {
                     Picker("Tournament", selection: $selectedTournament) {
                         Text("No Tournament").tag(Tournament?.none)
@@ -170,12 +205,20 @@ struct AddMatchView: View {
                             Text(tournament.name).tag(Tournament?.some(tournament))
                         }
                     }
-                    
+
                     Picker("Field", selection: $selectedField) {
                         Text("No Field").tag(Field?.none)
                         ForEach(fields.filter { $0.isActive }, id: \.id) { field in
                             Text(field.name).tag(Field?.some(field))
                         }
+                    }
+                }
+
+                if let errorMessage = errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.red)
+                            .font(.caption)
                     }
                 }
             }
@@ -186,26 +229,61 @@ struct AddMatchView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isLoading)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        addMatch()
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            addMatch()
+                        }
+                        .disabled(selectedHomeTeam == nil || selectedAwayTeam == nil || selectedTournament == nil)
                     }
-                    .disabled(selectedHomeTeam == nil || selectedAwayTeam == nil)
                 }
             }
         }
     }
-    
+
     private func addMatch() {
         guard let homeTeam = selectedHomeTeam,
-              let awayTeam = selectedAwayTeam else { return }
-        
-        let newMatch = Match(date: date, homeTeam: homeTeam, awayTeam: awayTeam)
-        newMatch.tournament = selectedTournament
-        newMatch.field = selectedField
-        modelContext.insert(newMatch)
-        dismiss()
+              let awayTeam = selectedAwayTeam,
+              let tournament = selectedTournament else { return }
+
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            do {
+                // Use MySQL-compatible datetime format (YYYY-MM-DD HH:MM:SS)
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                dateFormatter.timeZone = TimeZone(identifier: "UTC")
+                let scheduledTime = dateFormatter.string(from: date)
+
+                // Call API to create match
+                let matchDTO = try await ApiService.shared.createMatch(
+                    tournamentId: tournament.id.hashValue,
+                    team1Id: homeTeam.id.hashValue,
+                    team2Id: awayTeam.id.hashValue,
+                    scheduledTime: scheduledTime
+                )
+
+                await MainActor.run {
+                    let newMatch = Match(date: date, homeTeam: homeTeam, awayTeam: awayTeam)
+                    newMatch.tournament = selectedTournament
+                    newMatch.field = selectedField
+                    modelContext.insert(newMatch)
+                    isLoading = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "Failed to create match: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
 

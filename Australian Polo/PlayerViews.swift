@@ -14,7 +14,9 @@ struct PlayerListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var players: [Player]
     @State private var showingAddPlayer = false
-    
+    @State private var isLoadingPlayers = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             List {
@@ -36,14 +38,44 @@ struct PlayerListView: View {
             .sheet(isPresented: $showingAddPlayer) {
                 AddPlayerView()
             }
+            .onAppear {
+                fetchPlayers()
+            }
         }
     }
-    
+
+    private func fetchPlayers() {
+        isLoadingPlayers = true
+        Task {
+            do {
+                let playerDTOs = try await ApiService.shared.getAllPlayers()
+                await MainActor.run {
+                    isLoadingPlayers = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingPlayers = false
+                    errorMessage = "Failed to fetch players: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func deletePlayers(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
                 let player = players.filter { $0.isActive }[index]
                 player.isActive = false
+
+                Task {
+                    do {
+                        if let playerId = player.id.hashValue as? Int {
+                            try await ApiService.shared.deletePlayer(id: playerId)
+                        }
+                    } catch {
+                        print("Failed to delete player from API: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -103,13 +135,15 @@ struct AddPlayerView: View {
     @Query private var users: [User]
     @State private var selectedClub: Club?
     @State private var selectedUser: User?
-    
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("Player Information")) {
                     TextField("Name", text: $name)
-                    
+
                     VStack(alignment: .leading) {
                         Text("Handicap: \(handicap, specifier: "%.1f")")
                         Slider(value: $handicap, in: -2...10, step: 1) {
@@ -117,7 +151,7 @@ struct AddPlayerView: View {
                         }
                     }
                 }
-                
+
                 Section(header: Text("Associations")) {
                     Picker("User Account", selection: $selectedUser) {
                         Text("No User Account").tag(User?.none)
@@ -125,12 +159,20 @@ struct AddPlayerView: View {
                             Text(user.name).tag(User?.some(user))
                         }
                     }
-                    
+
                     Picker("Club", selection: $selectedClub) {
                         Text("No Club").tag(Club?.none)
                         ForEach(clubs.filter { $0.isActive }, id: \.id) { club in
                             Text(club.name).tag(Club?.some(club))
                         }
+                    }
+                }
+
+                if let errorMessage = errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.red)
+                            .font(.caption)
                     }
                 }
             }
@@ -141,24 +183,51 @@ struct AddPlayerView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isLoading)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        addPlayer()
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            addPlayer()
+                        }
+                        .disabled(name.isEmpty)
                     }
-                    .disabled(name.isEmpty)
                 }
             }
         }
     }
-    
+
     private func addPlayer() {
-        let newPlayer = Player(name: name, handicap: handicap)
-        newPlayer.club = selectedClub
-        newPlayer.user = selectedUser
-        selectedUser?.playerProfile = newPlayer
-        modelContext.insert(newPlayer)
-        dismiss()
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            do {
+                // Call API to create player
+                let playerDTO = try await ApiService.shared.createPlayer(
+                    name: name,
+                    teamId: nil,
+                    position: nil
+                )
+
+                await MainActor.run {
+                    let newPlayer = Player(name: name, handicap: handicap)
+                    newPlayer.club = selectedClub
+                    newPlayer.user = selectedUser
+                    selectedUser?.playerProfile = newPlayer
+                    modelContext.insert(newPlayer)
+                    isLoading = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "Failed to create player: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
 

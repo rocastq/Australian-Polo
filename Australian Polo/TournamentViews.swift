@@ -23,6 +23,8 @@ struct TournamentListView: View {
     @State private var showingAddMatch = false
     @State private var selectedMode: TournamentViewMode = .tournaments
     @State private var selectedMatchResult: MatchResult?
+    @State private var isLoadingTournaments = false
+    @State private var errorMessage: String?
 
     private var filteredMatches: [Match] {
         if let selectedResult = selectedMatchResult {
@@ -95,6 +97,27 @@ struct TournamentListView: View {
             .sheet(isPresented: $showingAddMatch) {
                 AddMatchView()
             }
+            .onAppear {
+                fetchTournaments()
+            }
+        }
+    }
+
+    private func fetchTournaments() {
+        isLoadingTournaments = true
+        Task {
+            do {
+                let tournamentDTOs = try await ApiService.shared.getAllTournaments()
+                // Tournaments fetched successfully
+                await MainActor.run {
+                    isLoadingTournaments = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingTournaments = false
+                    errorMessage = "Failed to fetch tournaments: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -103,6 +126,17 @@ struct TournamentListView: View {
             for index in offsets {
                 let tournament = tournaments.filter { $0.isActive }[index]
                 tournament.isActive = false
+
+                // Call API to delete tournament
+                Task {
+                    do {
+                        if let tournamentId = tournament.id.hashValue as? Int {
+                            try await ApiService.shared.deleteTournament(id: tournamentId)
+                        }
+                    } catch {
+                        print("Failed to delete tournament from API: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -170,24 +204,34 @@ struct AddTournamentView: View {
     @State private var selectedGrade: TournamentGrade = .medium
     @State private var startDate = Date()
     @State private var endDate = Date().addingTimeInterval(7 * 24 * 60 * 60) // 7 days later
-    
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("Tournament Information")) {
                     TextField("Name", text: $name)
                     TextField("Location", text: $location)
-                    
+
                     Picker("Grade", selection: $selectedGrade) {
                         ForEach(TournamentGrade.allCases, id: \.self) { grade in
                             Text(grade.rawValue).tag(grade)
                         }
                     }
                 }
-                
+
                 Section(header: Text("Schedule")) {
                     DatePicker("Start Date", selection: $startDate, displayedComponents: .date)
                     DatePicker("End Date", selection: $endDate, displayedComponents: .date)
+                }
+
+                if let errorMessage = errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.red)
+                            .font(.caption)
+                    }
                 }
             }
             .navigationTitle("Add Tournament")
@@ -197,21 +241,57 @@ struct AddTournamentView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isLoading)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        addTournament()
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            addTournament()
+                        }
+                        .disabled(name.isEmpty || location.isEmpty)
                     }
-                    .disabled(name.isEmpty || location.isEmpty)
                 }
             }
         }
     }
-    
+
     private func addTournament() {
-        let newTournament = Tournament(name: name, grade: selectedGrade, startDate: startDate, endDate: endDate, location: location)
-        modelContext.insert(newTournament)
-        dismiss()
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            do {
+                // Use MySQL-compatible date format (YYYY-MM-DD)
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd"
+                dateFormatter.timeZone = TimeZone(identifier: "UTC")
+                let startDateString = dateFormatter.string(from: startDate)
+                let endDateString = dateFormatter.string(from: endDate)
+
+                // Call API to create tournament
+                let tournamentDTO = try await ApiService.shared.createTournament(
+                    name: name,
+                    location: location,
+                    startDate: startDateString,
+                    endDate: endDateString
+                )
+
+                // Also save locally to SwiftData
+                await MainActor.run {
+                    let newTournament = Tournament(name: name, grade: selectedGrade, startDate: startDate, endDate: endDate, location: location)
+                    modelContext.insert(newTournament)
+                    isLoading = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "Failed to create tournament: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
 

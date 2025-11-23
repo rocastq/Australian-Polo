@@ -14,7 +14,9 @@ struct TeamListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var teams: [Team]
     @State private var showingAddTeam = false
-    
+    @State private var isLoadingTeams = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             List {
@@ -36,13 +38,43 @@ struct TeamListView: View {
             .sheet(isPresented: $showingAddTeam) {
                 AddTeamView()
             }
+            .onAppear {
+                fetchTeams()
+            }
         }
     }
-    
+
+    private func fetchTeams() {
+        isLoadingTeams = true
+        Task {
+            do {
+                let teamDTOs = try await ApiService.shared.getAllTeams()
+                await MainActor.run {
+                    isLoadingTeams = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingTeams = false
+                    errorMessage = "Failed to fetch teams: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func deleteTeams(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                modelContext.delete(teams[index])
+                let team = teams[index]
+                modelContext.delete(team)
+
+                Task {
+                    do {
+                        let teamId = team.id.hashValue
+                        try await ApiService.shared.deleteTeam(id: teamId)
+                    } catch {
+                        print("Failed to delete team from API: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -109,24 +141,34 @@ struct AddTeamView: View {
     @State private var selectedGrade: TournamentGrade = .medium
     @Query private var clubs: [Club]
     @State private var selectedClub: Club?
-    
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("Team Information")) {
                     TextField("Name", text: $name)
-                    
+
                     Picker("Grade", selection: $selectedGrade) {
                         ForEach(TournamentGrade.allCases, id: \.self) { grade in
                             Text(grade.rawValue).tag(grade)
                         }
                     }
-                    
+
                     Picker("Club", selection: $selectedClub) {
                         Text("No Club").tag(Club?.none)
                         ForEach(clubs.filter { $0.isActive }, id: \.id) { club in
                             Text(club.name).tag(Club?.some(club))
                         }
+                    }
+                }
+
+                if let errorMessage = errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.red)
+                            .font(.caption)
                     }
                 }
             }
@@ -137,22 +179,48 @@ struct AddTeamView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isLoading)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        addTeam()
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            addTeam()
+                        }
+                        .disabled(name.isEmpty)
                     }
-                    .disabled(name.isEmpty)
                 }
             }
         }
     }
-    
+
     private func addTeam() {
-        let newTeam = Team(name: name, grade: selectedGrade)
-        newTeam.club = selectedClub
-        modelContext.insert(newTeam)
-        dismiss()
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            do {
+                // Call API to create team
+                let teamDTO = try await ApiService.shared.createTeam(
+                    name: name,
+                    coach: nil
+                )
+
+                await MainActor.run {
+                    let newTeam = Team(name: name, grade: selectedGrade)
+                    newTeam.club = selectedClub
+                    modelContext.insert(newTeam)
+                    isLoading = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "Failed to create team: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
 
