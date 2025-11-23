@@ -14,7 +14,9 @@ struct HorseListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var horses: [Horse]
     @State private var showingAddHorse = false
-    
+    @State private var isLoadingHorses = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             List {
@@ -36,14 +38,44 @@ struct HorseListView: View {
             .sheet(isPresented: $showingAddHorse) {
                 AddHorseView()
             }
+            .onAppear {
+                fetchHorses()
+            }
         }
     }
-    
+
+    private func fetchHorses() {
+        isLoadingHorses = true
+        Task {
+            do {
+                let horseDTOs = try await ApiService.shared.getAllHorses()
+                await MainActor.run {
+                    isLoadingHorses = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingHorses = false
+                    errorMessage = "Failed to fetch horses: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func deleteHorses(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
                 let horse = horses.filter { $0.isActive }[index]
                 horse.isActive = false
+
+                Task {
+                    do {
+                        if let horseId = horse.id.hashValue as? Int {
+                            try await ApiService.shared.deleteHorse(id: horseId)
+                        }
+                    } catch {
+                        print("Failed to delete horse from API: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -118,30 +150,32 @@ struct AddHorseView: View {
     @Query private var players: [Player]
     @State private var selectedBreeder: Breeder?
     @State private var selectedOwner: Player?
-    
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("Horse Information")) {
                     TextField("Name", text: $name)
                     DatePicker("Birth Date", selection: $birthDate, displayedComponents: .date)
-                    
+
                     Picker("Gender", selection: $selectedGender) {
                         ForEach(HorseGender.allCases, id: \.self) { gender in
                             Text(gender.rawValue).tag(gender)
                         }
                     }
-                    
+
                     Picker("Color", selection: $selectedColor) {
                         ForEach(HorseColor.allCases, id: \.self) { color in
                             Text(color.rawValue).tag(color)
                         }
                     }
-                    
+
                     TextField("Pedigree", text: $pedigree, axis: .vertical)
                         .lineLimit(3...6)
                 }
-                
+
                 Section(header: Text("Associations")) {
                     Picker("Breeder", selection: $selectedBreeder) {
                         Text("No Breeder").tag(Breeder?.none)
@@ -149,12 +183,20 @@ struct AddHorseView: View {
                             Text(breeder.name).tag(Breeder?.some(breeder))
                         }
                     }
-                    
+
                     Picker("Owner", selection: $selectedOwner) {
                         Text("No Owner").tag(Player?.none)
                         ForEach(players.filter { $0.isActive }, id: \.id) { player in
                             Text(player.name).tag(Player?.some(player))
                         }
+                    }
+                }
+
+                if let errorMessage = errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.red)
+                            .font(.caption)
                     }
                 }
             }
@@ -165,23 +207,53 @@ struct AddHorseView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isLoading)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        addHorse()
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            addHorse()
+                        }
+                        .disabled(name.isEmpty)
                     }
-                    .disabled(name.isEmpty)
                 }
             }
         }
     }
-    
+
     private func addHorse() {
-        let newHorse = Horse(name: name, birthDate: birthDate, gender: selectedGender, color: selectedColor, pedigree: pedigree)
-        newHorse.breeder = selectedBreeder
-        newHorse.owner = selectedOwner
-        modelContext.insert(newHorse)
-        dismiss()
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            do {
+                // Build pedigree dictionary (simplified for now)
+                let pedigreeDict: [String: String]? = pedigree.isEmpty ? nil : ["info": pedigree]
+
+                // Call API to create horse
+                let horseDTO = try await ApiService.shared.createHorse(
+                    name: name,
+                    pedigree: pedigreeDict,
+                    breederId: selectedBreeder?.id.hashValue
+                )
+
+                await MainActor.run {
+                    let newHorse = Horse(name: name, birthDate: birthDate, gender: selectedGender, color: selectedColor, pedigree: pedigree)
+                    newHorse.breeder = selectedBreeder
+                    newHorse.owner = selectedOwner
+                    modelContext.insert(newHorse)
+                    isLoading = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "Failed to create horse: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
 

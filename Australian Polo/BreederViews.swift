@@ -14,7 +14,9 @@ struct BreederListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var breeders: [Breeder]
     @State private var showingAddBreeder = false
-    
+    @State private var isLoadingBreeders = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             List {
@@ -36,14 +38,44 @@ struct BreederListView: View {
             .sheet(isPresented: $showingAddBreeder) {
                 AddBreederView()
             }
+            .onAppear {
+                fetchBreeders()
+            }
         }
     }
-    
+
+    private func fetchBreeders() {
+        isLoadingBreeders = true
+        Task {
+            do {
+                let breederDTOs = try await ApiService.shared.getAllBreeders()
+                await MainActor.run {
+                    isLoadingBreeders = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingBreeders = false
+                    errorMessage = "Failed to fetch breeders: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func deleteBreeders(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
                 let breeder = breeders.filter { $0.isActive }[index]
                 breeder.isActive = false
+
+                Task {
+                    do {
+                        if let breederId = breeder.id.hashValue as? Int {
+                            try await ApiService.shared.deleteBreeder(id: breederId)
+                        }
+                    } catch {
+                        print("Failed to delete breeder from API: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -90,7 +122,9 @@ struct AddBreederView: View {
     @State private var establishedDate = Date()
     @Query private var users: [User]
     @State private var selectedUser: User?
-    
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
     var body: some View {
         NavigationView {
             Form {
@@ -99,13 +133,21 @@ struct AddBreederView: View {
                     TextField("Location", text: $location)
                     DatePicker("Established Date", selection: $establishedDate, displayedComponents: .date)
                 }
-                
+
                 Section(header: Text("User Account")) {
                     Picker("User Account", selection: $selectedUser) {
                         Text("No User Account").tag(User?.none)
                         ForEach(users.filter { $0.isActive && $0.role == .breeder && $0.breederProfile == nil }, id: \.id) { user in
                             Text(user.name).tag(User?.some(user))
                         }
+                    }
+                }
+
+                if let errorMessage = errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.red)
+                            .font(.caption)
                     }
                 }
             }
@@ -116,23 +158,49 @@ struct AddBreederView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .disabled(isLoading)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        addBreeder()
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            addBreeder()
+                        }
+                        .disabled(name.isEmpty || location.isEmpty)
                     }
-                    .disabled(name.isEmpty || location.isEmpty)
                 }
             }
         }
     }
-    
+
     private func addBreeder() {
-        let newBreeder = Breeder(name: name, location: location, establishedDate: establishedDate)
-        newBreeder.user = selectedUser
-        selectedUser?.breederProfile = newBreeder
-        modelContext.insert(newBreeder)
-        dismiss()
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            do {
+                // Call API to create breeder
+                let breederDTO = try await ApiService.shared.createBreeder(
+                    name: name,
+                    contactInfo: location
+                )
+
+                await MainActor.run {
+                    let newBreeder = Breeder(name: name, location: location, establishedDate: establishedDate)
+                    newBreeder.user = selectedUser
+                    selectedUser?.breederProfile = newBreeder
+                    modelContext.insert(newBreeder)
+                    isLoading = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = "Failed to create breeder: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
 
