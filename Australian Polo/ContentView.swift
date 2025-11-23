@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import Foundation
 
 // MARK: - Tabs
 
@@ -22,8 +23,20 @@ private enum AppTab: Hashable {
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: AppTab = .home
-    
+    @StateObject private var authManager = AuthenticationManager()
+
     var body: some View {
+        Group {
+            if authManager.isAuthenticated {
+                authenticatedView
+            } else {
+                AuthenticationFlow()
+            }
+        }
+        .environmentObject(authManager)
+    }
+
+    private var authenticatedView: some View {
         TabView(selection: $selectedTab) {
             // Home / Dashboard
             NavigationStack {
