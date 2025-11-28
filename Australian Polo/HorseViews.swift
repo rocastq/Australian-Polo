@@ -69,9 +69,9 @@ struct HorseListView: View {
 
                 Task {
                     do {
-                        if let horseId = horse.id.hashValue as? Int {
-                            try await ApiService.shared.deleteHorse(id: horseId)
-                        }
+                        // TODO: Implement proper UUID to backend ID mapping
+                        let horseId = abs(horse.id.hashValue)
+                        try await ApiService.shared.deleteHorse(id: horseId)
                     } catch {
                         print("Failed to delete horse from API: \(error.localizedDescription)")
                     }
@@ -236,7 +236,7 @@ struct AddHorseView: View {
                 let horseDTO = try await ApiService.shared.createHorse(
                     name: name,
                     pedigree: pedigreeDict,
-                    breederId: selectedBreeder?.id.hashValue
+                    breederId: selectedBreeder != nil ? abs(selectedBreeder!.id.hashValue) : nil
                 )
 
                 await MainActor.run {

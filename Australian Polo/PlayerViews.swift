@@ -69,9 +69,9 @@ struct PlayerListView: View {
 
                 Task {
                     do {
-                        if let playerId = player.id.hashValue as? Int {
-                            try await ApiService.shared.deletePlayer(id: playerId)
-                        }
+                        // TODO: Implement proper UUID to backend ID mapping
+                        let playerId = abs(player.id.hashValue)
+                        try await ApiService.shared.deletePlayer(id: playerId)
                     } catch {
                         print("Failed to delete player from API: \(error.localizedDescription)")
                     }

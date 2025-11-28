@@ -100,16 +100,7 @@ struct CreateOrUpdateMatchRequest: Codable {
     let result: String?
 }
 
-// MARK: - API Error
-
-struct APIError: LocalizedError {
-    let statusCode: Int
-    let message: String
-
-    var errorDescription: String? {
-        return message
-    }
-}
+// MARK: - API Error (using shared enum from AuthenticationService)
 
 struct ErrorResponse: Codable {
     let status: String?
@@ -181,11 +172,11 @@ class ApiService {
 
             // Try to parse backend error response
             if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
-                throw APIError(statusCode: http.statusCode, message: errorResponse.message)
+                throw APIError.serverError(errorResponse.message)
             }
 
             // Fallback to generic error
-            throw APIError(statusCode: http.statusCode, message: "Server returned status code \(http.statusCode)")
+            throw APIError.serverError("Server returned status code \(http.statusCode)")
         }
 
         do {
