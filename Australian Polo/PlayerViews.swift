@@ -49,7 +49,24 @@ struct PlayerListView: View {
         Task {
             do {
                 let playerDTOs = try await ApiService.shared.getAllPlayers()
+
+                // Save fetched players to SwiftData
                 await MainActor.run {
+                    for dto in playerDTOs {
+                        // Check if player already exists by backendId
+                        let existingPlayer = players.first { $0.backendId == dto.id }
+
+                        if existingPlayer == nil {
+                            // Create new player with backend ID
+                            let newPlayer = Player(
+                                name: dto.name,
+                                handicap: 0.0, // Default handicap since backend doesn't provide it
+                                backendId: dto.id
+                            )
+                            modelContext.insert(newPlayer)
+                        }
+                    }
+
                     isLoadingPlayers = false
                 }
             } catch {
@@ -65,16 +82,23 @@ struct PlayerListView: View {
         withAnimation {
             for index in offsets {
                 let player = players.filter { $0.isActive }[index]
-                player.isActive = false
 
-                Task {
-                    do {
-                        if let playerId = player.id.hashValue as? Int {
-                            try await ApiService.shared.deletePlayer(id: playerId)
+                // Call API to delete player if it has a backend ID
+                if let backendId = player.backendId {
+                    Task {
+                        do {
+                            try await ApiService.shared.deletePlayer(id: backendId)
+                            // Mark as inactive on successful backend deletion
+                            await MainActor.run {
+                                player.isActive = false
+                            }
+                        } catch {
+                            print("Failed to delete player from backend: \(error.localizedDescription)")
                         }
-                    } catch {
-                        print("Failed to delete player from API: \(error.localizedDescription)")
                     }
+                } else {
+                    // If no backend ID, just mark as inactive locally
+                    player.isActive = false
                 }
             }
         }
@@ -212,8 +236,13 @@ struct AddPlayerView: View {
                     position: nil
                 )
 
+                // Save locally to SwiftData with backend ID
                 await MainActor.run {
-                    let newPlayer = Player(name: name, handicap: handicap)
+                    let newPlayer = Player(
+                        name: name,
+                        handicap: handicap,
+                        backendId: playerDTO.id
+                    )
                     newPlayer.club = selectedClub
                     newPlayer.user = selectedUser
                     selectedUser?.playerProfile = newPlayer
@@ -238,24 +267,42 @@ struct PlayerDetailView: View {
     @Query private var allClubs: [Club]
     @Query private var allUsers: [User]
     @Environment(\.modelContext) private var modelContext
-    
+    @State private var isSyncing = false
+    @State private var syncMessage: String?
+    @State private var showingSyncAlert = false
+
     var body: some View {
         Form {
             Section(header: Text("Player Information")) {
                 TextField("Name", text: $player.name)
-                
+
                 VStack(alignment: .leading) {
                     Text("Handicap: \(player.handicap, specifier: "%.1f")")
                     Slider(value: $player.handicap, in: -2...10, step: 1) {
                         Text("Handicap")
                     }
                 }
-                
+
                 DatePicker("Join Date", selection: $player.joinDate, displayedComponents: .date)
-                
+
                 Toggle("Active Player", isOn: $player.isActive)
             }
-            
+
+            if player.backendId != nil {
+                Section {
+                    Button(action: syncToBackend) {
+                        HStack {
+                            if isSyncing {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
+                        }
+                    }
+                    .disabled(isSyncing)
+                }
+            }
+
             Section(header: Text("Associations")) {
                 Picker("User Account", selection: Binding<User?>(
                     get: { player.user },
@@ -360,6 +407,43 @@ struct PlayerDetailView: View {
         }
         .navigationTitle(player.name)
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Sync Status", isPresented: $showingSyncAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(syncMessage ?? "")
+        }
+    }
+
+    private func syncToBackend() {
+        guard let backendId = player.backendId else {
+            syncMessage = "Cannot sync: Player not linked to backend"
+            showingSyncAlert = true
+            return
+        }
+
+        isSyncing = true
+        Task {
+            do {
+                _ = try await ApiService.shared.updatePlayer(
+                    id: backendId,
+                    name: player.name,
+                    teamId: nil,
+                    position: nil
+                )
+
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Player synced successfully"
+                    showingSyncAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Sync failed: \(error.localizedDescription)"
+                    showingSyncAlert = true
+                }
+            }
+        }
     }
 }
 

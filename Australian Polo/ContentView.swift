@@ -301,6 +301,9 @@ private struct HomeDashboardView: View {
 // MARK: - Settings View
 
 struct SettingsView: View {
+    @EnvironmentObject private var authManager: AuthenticationManager
+    @Environment(\.dismiss) private var dismiss
+
     // Additional sections previously in More tab
     private let additionalSections: [NavigationSection] = [
         .users, .duties, .breeders
@@ -309,6 +312,38 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             List {
+                // User Profile Section
+                Section {
+                    if let user = authManager.currentUser {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(user.name)
+                                        .font(.headline)
+                                    Text(user.email)
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    Text(user.role.rawValue)
+                                        .font(.caption)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(.accent.opacity(0.2))
+                                        .foregroundColor(.accent)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                }
+                                Spacer()
+                                Image(systemName: "person.circle.fill")
+                                    .font(.largeTitle)
+                                    .foregroundColor(.accent)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("Profile")
+                }
+
+                // Additional Features Section
                 Section {
                     ForEach(additionalSections, id: \.self) { section in
                         NavigationLink {
@@ -322,6 +357,7 @@ struct SettingsView: View {
                     Text("Additional Features")
                 }
 
+                // App Settings Section
                 Section {
                     Label("App Settings", systemImage: "gearshape")
                     Label("About", systemImage: "info.circle")
@@ -329,9 +365,33 @@ struct SettingsView: View {
                 } header: {
                     Text("Settings")
                 }
+
+                // Account Section
+                Section {
+                    Button(action: {
+                        authManager.logout()
+                        dismiss()
+                    }) {
+                        HStack {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .foregroundColor(.red)
+                            Text("Sign Out")
+                                .foregroundColor(.red)
+                        }
+                    }
+                } header: {
+                    Text("Account")
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }

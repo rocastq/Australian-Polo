@@ -49,7 +49,24 @@ struct TeamListView: View {
         Task {
             do {
                 let teamDTOs = try await ApiService.shared.getAllTeams()
+
+                // Save fetched teams to SwiftData
                 await MainActor.run {
+                    for dto in teamDTOs {
+                        // Check if team already exists by backendId
+                        let existingTeam = teams.first { $0.backendId == dto.id }
+
+                        if existingTeam == nil {
+                            // Create new team with backend ID
+                            let newTeam = Team(
+                                name: dto.name,
+                                grade: .medium, // Default grade since backend doesn't provide it
+                                backendId: dto.id
+                            )
+                            modelContext.insert(newTeam)
+                        }
+                    }
+
                     isLoadingTeams = false
                 }
             } catch {
@@ -65,15 +82,25 @@ struct TeamListView: View {
         withAnimation {
             for index in offsets {
                 let team = teams[index]
-                modelContext.delete(team)
 
-                Task {
-                    do {
-                        let teamId = team.id.hashValue
-                        try await ApiService.shared.deleteTeam(id: teamId)
-                    } catch {
-                        print("Failed to delete team from API: \(error.localizedDescription)")
+                // Call API to delete team if it has a backend ID
+                if let backendId = team.backendId {
+                    Task {
+                        do {
+                            try await ApiService.shared.deleteTeam(id: backendId)
+                            // Delete from SwiftData on successful backend deletion
+                            await MainActor.run {
+                                modelContext.delete(team)
+                            }
+                        } catch {
+                            await MainActor.run {
+                                errorMessage = "Failed to delete team: \(error.localizedDescription)"
+                            }
+                        }
                     }
+                } else {
+                    // If no backend ID, just delete locally
+                    modelContext.delete(team)
                 }
             }
         }
@@ -128,6 +155,8 @@ struct TeamRowView: View {
         case .high: return .red
         case .medium: return .orange
         case .low: return .green
+        case .zero: return .gray
+        case .subzero: return .gray.opacity(0.5)
         }
     }
 }
@@ -207,8 +236,13 @@ struct AddTeamView: View {
                     coach: nil
                 )
 
+                // Save locally to SwiftData with backend ID
                 await MainActor.run {
-                    let newTeam = Team(name: name, grade: selectedGrade)
+                    let newTeam = Team(
+                        name: name,
+                        grade: selectedGrade,
+                        backendId: teamDTO.id
+                    )
                     newTeam.club = selectedClub
                     modelContext.insert(newTeam)
                     isLoading = false
@@ -232,18 +266,21 @@ struct TeamDetailView: View {
     @Query private var allClubs: [Club]
     @Environment(\.modelContext) private var modelContext
     @State private var showingPlayerSelection = false
-    
+    @State private var isSyncing = false
+    @State private var syncMessage: String?
+    @State private var showingSyncAlert = false
+
     var body: some View {
         Form {
             Section(header: Text("Team Information")) {
                 TextField("Name", text: $team.name)
-                
+
                 Picker("Grade", selection: $team.grade) {
                     ForEach(TournamentGrade.allCases, id: \.self) { grade in
                         Text(grade.rawValue).tag(grade)
                     }
                 }
-                
+
                 Picker("Club", selection: Binding<Club?>(
                     get: { team.club },
                     set: { team.club = $0 }
@@ -254,7 +291,7 @@ struct TeamDetailView: View {
                     }
                 }
             }
-            
+
             Section(header: Text("Statistics")) {
                 HStack {
                     Text("Games Played")
@@ -262,35 +299,35 @@ struct TeamDetailView: View {
                     Text("\(team.gamesPlayed)")
                         .foregroundColor(.secondary)
                 }
-                
+
                 HStack {
                     Text("Wins")
                     Spacer()
                     Text("\(team.wins)")
                         .foregroundColor(.green)
                 }
-                
+
                 HStack {
                     Text("Losses")
                     Spacer()
                     Text("\(team.losses)")
                         .foregroundColor(.red)
                 }
-                
+
                 HStack {
                     Text("Draws")
                     Spacer()
                     Text("\(team.draws)")
                         .foregroundColor(.orange)
                 }
-                
+
                 HStack {
                     Text("Goals For/Against")
                     Spacer()
                     Text("\(team.goalsFor)/\(team.goalsAgainst)")
                         .foregroundColor(.secondary)
                 }
-                
+
                 HStack {
                     Text("Goal Difference")
                     Spacer()
@@ -298,7 +335,22 @@ struct TeamDetailView: View {
                         .foregroundColor(team.goalDifference >= 0 ? .green : .red)
                 }
             }
-            
+
+            if team.backendId != nil {
+                Section {
+                    Button(action: syncToBackend) {
+                        HStack {
+                            if isSyncing {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
+                        }
+                    }
+                    .disabled(isSyncing)
+                }
+            }
+
             Section(header: HStack {
                 Text("Players (\(team.players.count))")
                 Spacer()
@@ -314,7 +366,7 @@ struct TeamDetailView: View {
                 }
                 .onDelete(perform: removePlayers)
             }
-            
+
             if !team.tournaments.isEmpty {
                 Section(header: Text("Tournaments")) {
                     ForEach(team.tournaments, id: \.id) { tournament in
@@ -336,8 +388,44 @@ struct TeamDetailView: View {
         .sheet(isPresented: $showingPlayerSelection) {
             PlayerSelectionView(team: team)
         }
+        .alert("Sync Status", isPresented: $showingSyncAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(syncMessage ?? "")
+        }
     }
-    
+
+    private func syncToBackend() {
+        guard let backendId = team.backendId else {
+            syncMessage = "Cannot sync: Team not linked to backend"
+            showingSyncAlert = true
+            return
+        }
+
+        isSyncing = true
+        Task {
+            do {
+                _ = try await ApiService.shared.updateTeam(
+                    id: backendId,
+                    name: team.name,
+                    coach: nil
+                )
+
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Team synced successfully"
+                    showingSyncAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Sync failed: \(error.localizedDescription)"
+                    showingSyncAlert = true
+                }
+            }
+        }
+    }
+
     private func removePlayers(offsets: IndexSet) {
         withAnimation {
             for index in offsets {

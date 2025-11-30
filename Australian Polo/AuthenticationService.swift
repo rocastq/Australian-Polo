@@ -57,10 +57,7 @@ struct UserProfile: Codable, Identifiable {
     let nationality: String?
 }
 
-struct ErrorResponse: Codable {
-    let message: String
-    let code: String?
-}
+// ErrorResponse is defined in ApiService.swift
 
 // MARK: - Authentication State
 
