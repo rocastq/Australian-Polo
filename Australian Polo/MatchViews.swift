@@ -13,6 +13,8 @@ import SwiftData
 struct MatchListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Match.date, order: .reverse) private var matches: [Match]
+    @Query private var tournaments: [Tournament]
+    @Query private var teams: [Team]
     @State private var showingAddMatch = false
     @State private var selectedResult: MatchResult?
     @State private var isLoadingMatches = false
@@ -65,8 +67,49 @@ struct MatchListView: View {
         isLoadingMatches = true
         Task {
             do {
-                // Note: API doesn't have getAllMatches, only getMatchesByTournament
-                // You may need to fetch matches per tournament or add getAllMatches to API
+                // Fetch matches for all tournaments with backend IDs
+                let tournamentsWithBackendIds = tournaments.filter { $0.backendId != nil }
+
+                for tournament in tournamentsWithBackendIds {
+                    guard let tournamentBackendId = tournament.backendId else { continue }
+
+                    let matchDTOs = try await ApiService.shared.getMatchesByTournament(tournamentId: tournamentBackendId)
+
+                    await MainActor.run {
+                        for dto in matchDTOs {
+                            // Check if match already exists by backendId
+                            let existingMatch = matches.first { $0.backendId == dto.id }
+
+                            if existingMatch == nil {
+                                // Find teams by backend ID
+                                let team1 = teams.first { $0.backendId == dto.team1_id }
+                                let team2 = teams.first { $0.backendId == dto.team2_id }
+
+                                if let team1 = team1, let team2 = team2 {
+                                // Parse scheduled time
+                                let date = dto.scheduled_time.flatMap { Date.apiDate(from: $0) } ?? Date()
+
+                                    // Create new match with backend ID
+                                    let newMatch = Match(
+                                        date: date,
+                                        homeTeam: team1,
+                                        awayTeam: team2,
+                                        backendId: dto.id
+                                    )
+                                    newMatch.tournament = tournament
+
+                                    // Parse result if available
+                                    if let resultString = dto.result {
+                                        newMatch.result = MatchResult(rawValue: resultString) ?? .pending
+                                    }
+
+                                    modelContext.insert(newMatch)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 await MainActor.run {
                     isLoadingMatches = false
                 }
@@ -83,16 +126,25 @@ struct MatchListView: View {
         withAnimation {
             for index in offsets {
                 let match = filteredMatches[index]
-                modelContext.delete(match)
 
-                Task {
-                    do {
-                        // TODO: Implement proper UUID to backend ID mapping
-                        let matchId = abs(match.id.hashValue)
-                        try await ApiService.shared.deleteMatch(id: matchId)
-                    } catch {
-                        print("Failed to delete match from API: \(error.localizedDescription)")
+                // Call API to delete match if it has a backend ID
+                if let backendId = match.backendId {
+                    Task {
+                        do {
+                            try await ApiService.shared.deleteMatch(id: backendId)
+                            // Delete from SwiftData on successful backend deletion
+                            await MainActor.run {
+                                modelContext.delete(match)
+                            }
+                        } catch {
+                            await MainActor.run {
+                                errorMessage = "Failed to delete match: \(error.localizedDescription)"
+                            }
+                        }
                     }
+                } else {
+                    // If no backend ID, just delete locally
+                    modelContext.delete(match)
                 }
             }
         }
@@ -249,29 +301,37 @@ struct AddMatchView: View {
     private func addMatch() {
         guard let homeTeam = selectedHomeTeam,
               let awayTeam = selectedAwayTeam,
-              let tournament = selectedTournament else { return }
+              let tournament = selectedTournament,
+              let tournamentBackendId = tournament.backendId,
+              let homeTeamBackendId = homeTeam.backendId,
+              let awayTeamBackendId = awayTeam.backendId else {
+            errorMessage = "Selected tournament or teams are not synced with backend"
+            return
+        }
 
         isLoading = true
         errorMessage = nil
 
         Task {
             do {
-                // Use MySQL-compatible datetime format (YYYY-MM-DD HH:MM:SS)
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-                dateFormatter.timeZone = TimeZone(identifier: "UTC")
-                let scheduledTime = dateFormatter.string(from: date)
+                let scheduledTime = date.apiISODateTimeString()
 
-                // Call API to create match
+                // Call API to create match using proper backend IDs
                 let matchDTO = try await ApiService.shared.createMatch(
-                    tournamentId: abs(tournament.id.hashValue),
-                    team1Id: abs(homeTeam.id.hashValue),
-                    team2Id: abs(awayTeam.id.hashValue),
+                    tournamentId: tournamentBackendId,
+                    team1Id: homeTeamBackendId,
+                    team2Id: awayTeamBackendId,
                     scheduledTime: scheduledTime
                 )
 
+                // Save locally to SwiftData with backend ID
                 await MainActor.run {
-                    let newMatch = Match(date: date, homeTeam: homeTeam, awayTeam: awayTeam)
+                    let newMatch = Match(
+                        date: date,
+                        homeTeam: homeTeam,
+                        awayTeam: awayTeam,
+                        backendId: matchDTO.id
+                    )
                     newMatch.tournament = selectedTournament
                     newMatch.field = selectedField
                     modelContext.insert(newMatch)
@@ -297,12 +357,15 @@ struct MatchDetailView: View {
     @Query private var allFields: [Field]
     @Environment(\.modelContext) private var modelContext
     @State private var showingScoreEntry = false
-    
+    @State private var isSyncing = false
+    @State private var syncMessage: String?
+    @State private var showingSyncAlert = false
+
     var body: some View {
         Form {
             Section(header: Text("Match Information")) {
                 DatePicker("Date & Time", selection: $match.date)
-                
+
                 Picker("Home Team", selection: Binding<Team?>(
                     get: { match.homeTeam },
                     set: { match.homeTeam = $0 }
@@ -312,7 +375,7 @@ struct MatchDetailView: View {
                         Text(team.name).tag(Team?.some(team))
                     }
                 }
-                
+
                 Picker("Away Team", selection: Binding<Team?>(
                     get: { match.awayTeam },
                     set: { match.awayTeam = $0 }
@@ -322,11 +385,11 @@ struct MatchDetailView: View {
                         Text(team.name).tag(Team?.some(team))
                     }
                 }
-                
+
                 TextField("Notes", text: $match.notes, axis: .vertical)
                     .lineLimit(3...6)
             }
-            
+
             Section(header: Text("Score & Result")) {
                 HStack {
                     Text("Home Score")
@@ -336,7 +399,7 @@ struct MatchDetailView: View {
                     }
                     .foregroundColor(.blue)
                 }
-                
+
                 HStack {
                     Text("Away Score")
                     Spacer()
@@ -345,14 +408,29 @@ struct MatchDetailView: View {
                     }
                     .foregroundColor(.blue)
                 }
-                
+
                 Picker("Result", selection: $match.result) {
                     ForEach(MatchResult.allCases, id: \.self) { result in
                         Text(result.rawValue).tag(result)
                     }
                 }
             }
-            
+
+            if match.backendId != nil {
+                Section {
+                    Button(action: syncToBackend) {
+                        HStack {
+                            if isSyncing {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
+                        }
+                    }
+                    .disabled(isSyncing)
+                }
+            }
+
             Section(header: Text("Associations")) {
                 Picker("Tournament", selection: Binding<Tournament?>(
                     get: { match.tournament },
@@ -363,7 +441,7 @@ struct MatchDetailView: View {
                         Text(tournament.name).tag(Tournament?.some(tournament))
                     }
                 }
-                
+
                 Picker("Field", selection: Binding<Field?>(
                     get: { match.field },
                     set: { match.field = $0 }
@@ -374,7 +452,7 @@ struct MatchDetailView: View {
                     }
                 }
             }
-            
+
             if !match.duties.isEmpty {
                 Section(header: Text("Match Officials")) {
                     ForEach(match.duties, id: \.id) { duty in
@@ -384,7 +462,7 @@ struct MatchDetailView: View {
                     }
                 }
             }
-            
+
             if !match.participations.isEmpty {
                 Section(header: Text("Player Participations")) {
                     ForEach(match.participations, id: \.id) { participation in
@@ -422,6 +500,50 @@ struct MatchDetailView: View {
         }
         .sheet(isPresented: $showingScoreEntry) {
             ScoreEntryView(match: match)
+        }
+        .alert("Sync Status", isPresented: $showingSyncAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(syncMessage ?? "")
+        }
+    }
+
+    private func syncToBackend() {
+        guard let backendId = match.backendId,
+              let tournamentBackendId = match.tournament?.backendId,
+              let homeTeamBackendId = match.homeTeam?.backendId,
+              let awayTeamBackendId = match.awayTeam?.backendId else {
+            syncMessage = "Cannot sync: Match, tournament, or teams not linked to backend"
+            showingSyncAlert = true
+            return
+        }
+
+        isSyncing = true
+        Task {
+            do {
+                let scheduledTime = match.date.apiISODateTimeString()
+
+                _ = try await ApiService.shared.updateMatch(
+                    id: backendId,
+                    tournamentId: tournamentBackendId,
+                    team1Id: homeTeamBackendId,
+                    team2Id: awayTeamBackendId,
+                    scheduledTime: scheduledTime,
+                    result: match.result.rawValue
+                )
+
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Match synced successfully"
+                    showingSyncAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Sync failed: \(error.localizedDescription)"
+                    showingSyncAlert = true
+                }
+            }
         }
     }
 }

@@ -152,7 +152,25 @@ struct ClubListView: View {
     private func deleteTeams(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                modelContext.delete(teams[index])
+                let team = teams[index]
+
+                // Call API to delete team if it has a backend ID
+                if let backendId = team.backendId {
+                    Task {
+                        do {
+                            try await ApiService.shared.deleteTeam(id: backendId)
+                            // Delete from SwiftData on successful backend deletion
+                            await MainActor.run {
+                                modelContext.delete(team)
+                            }
+                        } catch {
+                            print("Failed to delete team from backend: \(error.localizedDescription)")
+                        }
+                    }
+                } else {
+                    // If no backend ID, just delete locally
+                    modelContext.delete(team)
+                }
             }
         }
     }

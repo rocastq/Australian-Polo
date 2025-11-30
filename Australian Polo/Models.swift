@@ -44,29 +44,33 @@ final class User {
 // MARK: - Tournament Management
 
 enum TournamentGrade: String, CaseIterable, Codable {
-    case high = "High"
-    case medium = "Medium"
-    case low = "Low"
+    case high = "High Goal"
+    case medium = "Medium Goal"
+    case low = "Low Goal"
+    case zero = "Zero"
+    case subzero = "Sub-Zero"
 }
 
 @Model
 final class Tournament {
     var id: UUID
+    var backendId: Int? // Backend database ID for syncing
     var name: String
     var grade: TournamentGrade
     var startDate: Date
     var endDate: Date
     var location: String
     var isActive: Bool
-    
+
     // Relationships
     @Relationship(deleteRule: .cascade) var matches: [Match] = []
     @Relationship(deleteRule: .nullify, inverse: \Club.tournaments) var club: Club?
     @Relationship(deleteRule: .nullify) var field: Field?
     @Relationship(deleteRule: .nullify) var teams: [Team] = []
-    
-    init(name: String, grade: TournamentGrade, startDate: Date, endDate: Date, location: String) {
+
+    init(name: String, grade: TournamentGrade, startDate: Date, endDate: Date, location: String, backendId: Int? = nil) {
         self.id = UUID()
+        self.backendId = backendId
         self.name = name
         self.grade = grade
         self.startDate = startDate
@@ -128,6 +132,7 @@ final class Club {
 @Model
 final class Team {
     var id: UUID
+    var backendId: Int? // Backend database ID for syncing
     var name: String
     var grade: TournamentGrade
     var wins: Int
@@ -135,16 +140,17 @@ final class Team {
     var draws: Int
     var goalsFor: Int
     var goalsAgainst: Int
-    
+
     // Relationships
     @Relationship(deleteRule: .nullify) var players: [Player] = []
     @Relationship(deleteRule: .nullify) var club: Club?
     @Relationship(deleteRule: .nullify) var tournaments: [Tournament] = []
     @Relationship(deleteRule: .cascade) var homeMatches: [Match] = []
     @Relationship(deleteRule: .cascade) var awayMatches: [Match] = []
-    
-    init(name: String, grade: TournamentGrade) {
+
+    init(name: String, grade: TournamentGrade, backendId: Int? = nil) {
         self.id = UUID()
+        self.backendId = backendId
         self.name = name
         self.grade = grade
         self.wins = 0
@@ -153,7 +159,7 @@ final class Team {
         self.goalsFor = 0
         self.goalsAgainst = 0
     }
-    
+
     var gamesPlayed: Int { wins + losses + draws }
     var goalDifference: Int { goalsFor - goalsAgainst }
 }
@@ -190,6 +196,7 @@ final class Duty {
 @Model
 final class Player {
     var id: UUID
+    var backendId: Int? // Backend database ID for syncing
     var name: String
     var handicap: Double
     var gamesPlayed: Int
@@ -199,7 +206,7 @@ final class Player {
     var draws: Int
     var joinDate: Date
     var isActive: Bool
-    
+
     // Relationships
     @Relationship(deleteRule: .nullify) var user: User?
     @Relationship(deleteRule: .nullify) var club: Club?
@@ -207,9 +214,10 @@ final class Player {
     @Relationship(deleteRule: .cascade) var duties: [Duty] = []
     @Relationship(deleteRule: .cascade) var horses: [Horse] = []
     @Relationship(deleteRule: .cascade) var matchParticipations: [MatchParticipation] = []
-    
-    init(name: String, handicap: Double) {
+
+    init(name: String, handicap: Double, backendId: Int? = nil) {
         self.id = UUID()
+        self.backendId = backendId
         self.name = name
         self.handicap = handicap
         self.gamesPlayed = 0
@@ -220,7 +228,7 @@ final class Player {
         self.joinDate = Date()
         self.isActive = true
     }
-    
+
     var winPercentage: Double {
         guard gamesPlayed > 0 else { return 0.0 }
         return Double(wins) / Double(gamesPlayed) * 100
@@ -232,17 +240,19 @@ final class Player {
 @Model
 final class Breeder {
     var id: UUID
+    var backendId: Int? // Backend database ID for syncing
     var name: String
     var location: String
     var establishedDate: Date
     var isActive: Bool
-    
+
     // Relationships
     @Relationship(deleteRule: .nullify) var user: User?
     @Relationship(deleteRule: .nullify, inverse: \Horse.breeder) var horses: [Horse] = []
-    
-    init(name: String, location: String, establishedDate: Date = Date()) {
+
+    init(name: String, location: String, establishedDate: Date = Date(), backendId: Int? = nil) {
         self.id = UUID()
+        self.backendId = backendId
         self.name = name
         self.location = location
         self.establishedDate = establishedDate
@@ -272,6 +282,7 @@ enum HorseColor: String, CaseIterable, Codable {
 @Model
 final class Horse {
     var id: UUID
+    var backendId: Int? // Backend database ID for syncing
     var name: String
     var birthDate: Date
     var gender: HorseGender
@@ -281,14 +292,15 @@ final class Horse {
     var tournamentsWon: Int
     var awards: [String]
     var isActive: Bool
-    
+
     // Relationships
     @Relationship(deleteRule: .nullify) var breeder: Breeder?
     @Relationship(deleteRule: .nullify) var owner: Player?
     @Relationship(deleteRule: .cascade) var matchParticipations: [MatchParticipation] = []
-    
-    init(name: String, birthDate: Date, gender: HorseGender, color: HorseColor, pedigree: String = "") {
+
+    init(name: String, birthDate: Date, gender: HorseGender, color: HorseColor, pedigree: String = "", backendId: Int? = nil) {
         self.id = UUID()
+        self.backendId = backendId
         self.name = name
         self.birthDate = birthDate
         self.gender = gender
@@ -299,7 +311,7 @@ final class Horse {
         self.awards = []
         self.isActive = true
     }
-    
+
     var age: Int {
         let calendar = Calendar.current
         let now = Date()
@@ -320,12 +332,13 @@ enum MatchResult: String, CaseIterable, Codable {
 @Model
 final class Match {
     var id: UUID
+    var backendId: Int? // Backend database ID for syncing
     var date: Date
     var homeScore: Int
     var awayScore: Int
     var result: MatchResult
     var notes: String
-    
+
     // Relationships
     @Relationship(deleteRule: .nullify, inverse: \Team.homeMatches) var homeTeam: Team?
     @Relationship(deleteRule: .nullify, inverse: \Team.awayMatches) var awayTeam: Team?
@@ -333,9 +346,10 @@ final class Match {
     @Relationship(deleteRule: .nullify, inverse: \Field.matches) var field: Field?
     @Relationship(deleteRule: .cascade) var duties: [Duty] = []
     @Relationship(deleteRule: .cascade) var participations: [MatchParticipation] = []
-    
-    init(date: Date, homeTeam: Team, awayTeam: Team) {
+
+    init(date: Date, homeTeam: Team, awayTeam: Team, backendId: Int? = nil) {
         self.id = UUID()
+        self.backendId = backendId
         self.date = date
         self.homeScore = 0
         self.awayScore = 0

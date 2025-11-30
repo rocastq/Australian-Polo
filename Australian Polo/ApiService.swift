@@ -1,5 +1,52 @@
 import Foundation
 
+// Shared ISO8601 formatters for API payloads
+private let apiISODateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.formatOptions = [.withFullDate]
+    return formatter
+}()
+
+private let apiISODateTimeFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+extension Date {
+    func apiISODateString() -> String {
+        apiISODateFormatter.string(from: self)
+    }
+
+    func apiISODateTimeString() -> String {
+        apiISODateTimeFormatter.string(from: self)
+    }
+
+    static func apiDate(from string: String) -> Date? {
+        if let isoWithTime = apiISODateTimeFormatter.date(from: string) {
+            return isoWithTime
+        }
+        if let isoDateOnly = apiISODateFormatter.date(from: string) {
+            return isoDateOnly
+        }
+
+        // Fallbacks for legacy MySQL-style formats
+        let dateTime = DateFormatter()
+        dateTime.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        dateTime.timeZone = TimeZone(identifier: "UTC")
+        if let parsed = dateTime.date(from: string) {
+            return parsed
+        }
+
+        let dateOnly = DateFormatter()
+        dateOnly.dateFormat = "yyyy-MM-dd"
+        dateOnly.timeZone = TimeZone(identifier: "UTC")
+        return dateOnly.date(from: string)
+    }
+}
+
 // MARK: - DTOs / Models for API
 
 struct TournamentDTO: Codable, Identifiable {
@@ -427,10 +474,22 @@ class ApiService {
         return dto
     }
 
-    func updateMatch(id: Int, team1Id: Int, team2Id: Int, scheduledTime: String, result: String?) async throws -> MatchDTO {
+    func updateMatch(
+        id: Int,
+        tournamentId: Int,
+        team1Id: Int,
+        team2Id: Int,
+        scheduledTime: String,
+        result: String?
+    ) async throws -> MatchDTO {
         guard let url = makeURL("/matches/\(id)") else { throw URLError(.badURL) }
-        let bodyObj = CreateOrUpdateMatchRequest(tournament_id: 0, team1_id: team1Id, team2_id: team2Id, scheduled_time: scheduledTime, result: result)
-        // tournament_id isn’t really needed for updating; backend might ignore
+        let bodyObj = CreateOrUpdateMatchRequest(
+            tournament_id: tournamentId,
+            team1_id: team1Id,
+            team2_id: team2Id,
+            scheduled_time: scheduledTime,
+            result: result
+        )
         let bodyData = try JSONEncoder().encode(bodyObj)
         let (dto, _): (MatchDTO, HTTPURLResponse) = try await request(url, method: "PUT", body: bodyData)
         return dto

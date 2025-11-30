@@ -108,8 +108,32 @@ struct TournamentListView: View {
         Task {
             do {
                 let tournamentDTOs = try await ApiService.shared.getAllTournaments()
-                // Tournaments fetched successfully
+
+                // Save fetched tournaments to SwiftData
                 await MainActor.run {
+                    for dto in tournamentDTOs {
+                        // Check if tournament already exists by backendId
+                        let existingTournament = tournaments.first { $0.backendId == dto.id }
+
+                        if existingTournament == nil {
+                            // Parse dates from backend format (YYYY-MM-DD)
+                            let startDate = dto.start_date.flatMap { Date.apiDate(from: $0) } ?? Date()
+                            let endDate = dto.end_date.flatMap { Date.apiDate(from: $0) } ?? Date()
+                            let location = dto.location ?? "Unknown"
+
+                            // Create new tournament with backend ID
+                            let newTournament = Tournament(
+                                name: dto.name,
+                                grade: .medium, // Default grade since backend doesn't provide it
+                                startDate: startDate,
+                                endDate: endDate,
+                                location: location,
+                                backendId: dto.id
+                            )
+                            modelContext.insert(newTournament)
+                        }
+                    }
+
                     isLoadingTournaments = false
                 }
             } catch {
@@ -125,17 +149,25 @@ struct TournamentListView: View {
         withAnimation {
             for index in offsets {
                 let tournament = tournaments.filter { $0.isActive }[index]
-                tournament.isActive = false
 
-                // Call API to delete tournament
-                Task {
-                    do {
-                        // TODO: Implement proper UUID to backend ID mapping
-                        let tournamentId = abs(tournament.id.hashValue)
-                        try await ApiService.shared.deleteTournament(id: tournamentId)
-                    } catch {
-                        print("Failed to delete tournament from API: \(error.localizedDescription)")
+                // Call API to delete tournament if it has a backend ID
+                if let backendId = tournament.backendId {
+                    Task {
+                        do {
+                            try await ApiService.shared.deleteTournament(id: backendId)
+                            // Delete from SwiftData on successful backend deletion
+                            await MainActor.run {
+                                modelContext.delete(tournament)
+                            }
+                        } catch {
+                            await MainActor.run {
+                                errorMessage = "Failed to delete tournament: \(error.localizedDescription)"
+                            }
+                        }
                     }
+                } else {
+                    // If no backend ID, just delete locally
+                    modelContext.delete(tournament)
                 }
             }
         }
@@ -190,6 +222,8 @@ struct TournamentRowView: View {
         case .high: return .red
         case .medium: return .orange
         case .low: return .green
+        case .zero: return .blue
+        case .subzero: return .purple
         }
     }
 }
@@ -263,12 +297,8 @@ struct AddTournamentView: View {
 
         Task {
             do {
-                // Use MySQL-compatible date format (YYYY-MM-DD)
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd"
-                dateFormatter.timeZone = TimeZone(identifier: "UTC")
-                let startDateString = dateFormatter.string(from: startDate)
-                let endDateString = dateFormatter.string(from: endDate)
+                let startDateString = startDate.apiISODateString()
+                let endDateString = endDate.apiISODateString()
 
                 // Call API to create tournament
                 let tournamentDTO = try await ApiService.shared.createTournament(
@@ -278,9 +308,16 @@ struct AddTournamentView: View {
                     endDate: endDateString
                 )
 
-                // Also save locally to SwiftData
+                // Save locally to SwiftData with backend ID
                 await MainActor.run {
-                    let newTournament = Tournament(name: name, grade: selectedGrade, startDate: startDate, endDate: endDate, location: location)
+                    let newTournament = Tournament(
+                        name: name,
+                        grade: selectedGrade,
+                        startDate: startDate,
+                        endDate: endDate,
+                        location: location,
+                        backendId: tournamentDTO.id
+                    )
                     modelContext.insert(newTournament)
                     isLoading = false
                     dismiss()
@@ -302,27 +339,30 @@ struct TournamentDetailView: View {
     @Query private var allClubs: [Club]
     @Query private var allFields: [Field]
     @Environment(\.modelContext) private var modelContext
-    
+    @State private var isSyncing = false
+    @State private var syncMessage: String?
+    @State private var showingSyncAlert = false
+
     var body: some View {
         Form {
             Section(header: Text("Tournament Information")) {
                 TextField("Name", text: $tournament.name)
                 TextField("Location", text: $tournament.location)
-                
+
                 Picker("Grade", selection: $tournament.grade) {
                     ForEach(TournamentGrade.allCases, id: \.self) { grade in
                         Text(grade.rawValue).tag(grade)
                     }
                 }
             }
-            
+
             Section(header: Text("Schedule")) {
                 DatePicker("Start Date", selection: $tournament.startDate, displayedComponents: .date)
                 DatePicker("End Date", selection: $tournament.endDate, displayedComponents: .date)
-                
+
                 Toggle("Active Tournament", isOn: $tournament.isActive)
             }
-            
+
             Section(header: Text("Associations")) {
                 Picker("Club", selection: Binding<Club?>(
                     get: { tournament.club },
@@ -333,7 +373,7 @@ struct TournamentDetailView: View {
                         Text(club.name).tag(Club?.some(club))
                     }
                 }
-                
+
                 Picker("Field", selection: Binding<Field?>(
                     get: { tournament.field },
                     set: { tournament.field = $0 }
@@ -344,7 +384,7 @@ struct TournamentDetailView: View {
                     }
                 }
             }
-            
+
             Section(header: Text("Statistics")) {
                 HStack {
                     Text("Total Matches")
@@ -352,7 +392,7 @@ struct TournamentDetailView: View {
                     Text("\(tournament.matches.count)")
                         .foregroundColor(.secondary)
                 }
-                
+
                 HStack {
                     Text("Teams Participating")
                     Spacer()
@@ -360,7 +400,22 @@ struct TournamentDetailView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
+
+            if tournament.backendId != nil {
+                Section {
+                    Button(action: syncToBackend) {
+                        HStack {
+                            if isSyncing {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
+                        }
+                    }
+                    .disabled(isSyncing)
+                }
+            }
+
             if !tournament.matches.isEmpty {
                 Section(header: Text("Matches")) {
                     ForEach(tournament.matches, id: \.id) { match in
@@ -373,5 +428,46 @@ struct TournamentDetailView: View {
         }
         .navigationTitle(tournament.name)
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Sync Status", isPresented: $showingSyncAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(syncMessage ?? "")
+        }
+    }
+
+    private func syncToBackend() {
+        guard let backendId = tournament.backendId else {
+            syncMessage = "Cannot sync: Tournament not linked to backend"
+            showingSyncAlert = true
+            return
+        }
+
+        isSyncing = true
+        Task {
+            do {
+                let startDateString = tournament.startDate.apiISODateString()
+                let endDateString = tournament.endDate.apiISODateString()
+
+                _ = try await ApiService.shared.updateTournament(
+                    id: backendId,
+                    name: tournament.name,
+                    location: tournament.location,
+                    startDate: startDateString,
+                    endDate: endDateString
+                )
+
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Tournament synced successfully"
+                    showingSyncAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Sync failed: \(error.localizedDescription)"
+                    showingSyncAlert = true
+                }
+            }
+        }
     }
 }

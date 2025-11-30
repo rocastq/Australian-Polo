@@ -88,6 +88,8 @@ struct FieldRowView: View {
         case .high: return .red
         case .medium: return .orange
         case .low: return .green
+        case .zero: return .gray
+        case .subzero: return .gray.opacity(0.5)
         }
     }
 }
