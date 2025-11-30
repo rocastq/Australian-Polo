@@ -69,7 +69,8 @@ struct TeamListView: View {
 
                 Task {
                     do {
-                        let teamId = team.id.hashValue
+                        // TODO: Implement proper UUID to backend ID mapping
+                        let teamId = abs(team.id.hashValue)
                         try await ApiService.shared.deleteTeam(id: teamId)
                     } catch {
                         print("Failed to delete team from API: \(error.localizedDescription)")
