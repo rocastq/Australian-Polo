@@ -49,7 +49,27 @@ struct HorseListView: View {
         Task {
             do {
                 let horseDTOs = try await ApiService.shared.getAllHorses()
+
+                // Save fetched horses to SwiftData
                 await MainActor.run {
+                    for dto in horseDTOs {
+                        // Check if horse already exists by backendId
+                        let existingHorse = horses.first { $0.backendId == dto.id }
+
+                        if existingHorse == nil {
+                            // Create new horse with backend ID (using defaults for local-only fields)
+                            let newHorse = Horse(
+                                name: dto.name,
+                                birthDate: Date(), // Default since backend doesn't provide it
+                                gender: .gelding, // Default
+                                color: .bay, // Default
+                                pedigree: dto.pedigree?["info"] ?? "",
+                                backendId: dto.id
+                            )
+                            modelContext.insert(newHorse)
+                        }
+                    }
+
                     isLoadingHorses = false
                 }
             } catch {
@@ -65,16 +85,23 @@ struct HorseListView: View {
         withAnimation {
             for index in offsets {
                 let horse = horses.filter { $0.isActive }[index]
-                horse.isActive = false
 
-                Task {
-                    do {
-                        // TODO: Implement proper UUID to backend ID mapping
-                        let horseId = abs(horse.id.hashValue)
-                        try await ApiService.shared.deleteHorse(id: horseId)
-                    } catch {
-                        print("Failed to delete horse from API: \(error.localizedDescription)")
+                // Call API to delete horse if it has a backend ID
+                if let backendId = horse.backendId {
+                    Task {
+                        do {
+                            try await ApiService.shared.deleteHorse(id: backendId)
+                            // Mark as inactive on successful backend deletion
+                            await MainActor.run {
+                                horse.isActive = false
+                            }
+                        } catch {
+                            print("Failed to delete horse from backend: \(error.localizedDescription)")
+                        }
                     }
+                } else {
+                    // If no backend ID, just mark as inactive locally
+                    horse.isActive = false
                 }
             }
         }
@@ -236,11 +263,19 @@ struct AddHorseView: View {
                 let horseDTO = try await ApiService.shared.createHorse(
                     name: name,
                     pedigree: pedigreeDict,
-                    breederId: selectedBreeder != nil ? abs(selectedBreeder!.id.hashValue) : nil
+                    breederId: selectedBreeder?.backendId
                 )
 
+                // Save locally to SwiftData with backend ID
                 await MainActor.run {
-                    let newHorse = Horse(name: name, birthDate: birthDate, gender: selectedGender, color: selectedColor, pedigree: pedigree)
+                    let newHorse = Horse(
+                        name: name,
+                        birthDate: birthDate,
+                        gender: selectedGender,
+                        color: selectedColor,
+                        pedigree: pedigree,
+                        backendId: horseDTO.id
+                    )
                     newHorse.breeder = selectedBreeder
                     newHorse.owner = selectedOwner
                     modelContext.insert(newHorse)
@@ -266,31 +301,49 @@ struct HorseDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var newAward = ""
     @State private var showingAddAward = false
-    
+    @State private var isSyncing = false
+    @State private var syncMessage: String?
+    @State private var showingSyncAlert = false
+
     var body: some View {
         Form {
             Section(header: Text("Horse Information")) {
                 TextField("Name", text: $horse.name)
                 DatePicker("Birth Date", selection: $horse.birthDate, displayedComponents: .date)
-                
+
                 Picker("Gender", selection: $horse.gender) {
                     ForEach(HorseGender.allCases, id: \.self) { gender in
                         Text(gender.rawValue).tag(gender)
                     }
                 }
-                
+
                 Picker("Color", selection: $horse.color) {
                     ForEach(HorseColor.allCases, id: \.self) { color in
                         Text(color.rawValue).tag(color)
                     }
                 }
-                
+
                 TextField("Pedigree", text: $horse.pedigree, axis: .vertical)
                     .lineLimit(3...6)
-                
+
                 Toggle("Active Horse", isOn: $horse.isActive)
             }
-            
+
+            if horse.backendId != nil {
+                Section {
+                    Button(action: syncToBackend) {
+                        HStack {
+                            if isSyncing {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
+                        }
+                    }
+                    .disabled(isSyncing)
+                }
+            }
+
             Section(header: Text("Details")) {
                 HStack {
                     Text("Age")
@@ -396,6 +449,45 @@ struct HorseDetailView: View {
             }
         } message: {
             Text("Enter the name of the award or achievement.")
+        }
+        .alert("Sync Status", isPresented: $showingSyncAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(syncMessage ?? "")
+        }
+    }
+
+    private func syncToBackend() {
+        guard let backendId = horse.backendId else {
+            syncMessage = "Cannot sync: Horse not linked to backend"
+            showingSyncAlert = true
+            return
+        }
+
+        isSyncing = true
+        Task {
+            do {
+                let pedigreeDict: [String: String]? = horse.pedigree.isEmpty ? nil : ["info": horse.pedigree]
+
+                _ = try await ApiService.shared.updateHorse(
+                    id: backendId,
+                    name: horse.name,
+                    pedigree: pedigreeDict,
+                    breederId: horse.breeder?.backendId
+                )
+
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Horse synced successfully"
+                    showingSyncAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isSyncing = false
+                    syncMessage = "Sync failed: \(error.localizedDescription)"
+                    showingSyncAlert = true
+                }
+            }
         }
     }
 }
