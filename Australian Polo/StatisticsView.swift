@@ -130,18 +130,18 @@ struct PlayerStatisticsView: View {
                 Section(header: Text("Average Statistics")) {
                     let avgGames = Double(activePlayers.reduce(0) { $0 + $1.gamesPlayed }) / Double(activePlayers.count)
                     let avgGoals = Double(activePlayers.reduce(0) { $0 + $1.goalsScored }) / Double(activePlayers.count)
-                    let avgHandicap = activePlayers.reduce(0.0) { $0 + $1.handicap } / Double(activePlayers.count)
-                    
+                    let avgHandicap = activePlayers.reduce(0.0) { $0 + $1.currentHandicap } / Double(activePlayers.count)
+
                     StatisticRowView(title: "Games per Player", value: String(format: "%.1f", avgGames))
                     StatisticRowView(title: "Goals per Player", value: String(format: "%.1f", avgGoals))
                     StatisticRowView(title: "Average Handicap", value: String(format: "%.1f", avgHandicap))
                 }
             }
-            
+
             Section(header: Text("Top Scorers")) {
                 ForEach(topScorers, id: \.id) { player in
                     HStack {
-                        Text(player.name)
+                        Text(player.displayName)
                             .font(.headline)
                         Spacer()
                         VStack(alignment: .trailing) {
@@ -157,14 +157,14 @@ struct PlayerStatisticsView: View {
                     }
                 }
             }
-            
+
             Section(header: Text("Handicap Distribution")) {
                 let handicapRanges = [
-                    ("Low Goal (0-4)", players.filter { $0.handicap >= 0 && $0.handicap <= 4 }.count),
-                    ("Medium Goal (5-6)", players.filter { $0.handicap >= 5 && $0.handicap <= 6 }.count),
-                    ("High Goal (7+)", players.filter { $0.handicap >= 7 }.count)
+                    ("Low Goal (0-4)", players.filter { $0.currentHandicap >= 0 && $0.currentHandicap <= 4 }.count),
+                    ("Medium Goal (5-6)", players.filter { $0.currentHandicap >= 5 && $0.currentHandicap <= 6 }.count),
+                    ("High Goal (7+)", players.filter { $0.currentHandicap >= 7 }.count)
                 ]
-                
+
                 ForEach(handicapRanges, id: \.0) { range in
                     StatisticRowView(title: range.0, value: "\(range.1)")
                 }

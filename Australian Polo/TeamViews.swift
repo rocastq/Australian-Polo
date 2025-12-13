@@ -27,6 +27,9 @@ struct TeamListView: View {
                 }
                 .onDelete(perform: deleteTeams)
             }
+            .refreshable {
+                await refreshTeams()
+            }
             .navigationTitle("Teams")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -102,6 +105,33 @@ struct TeamListView: View {
                     // If no backend ID, just delete locally
                     modelContext.delete(team)
                 }
+            }
+        }
+    }
+
+    private func refreshTeams() async {
+        do {
+            let teamDTOs = try await ApiService.shared.getAllTeams()
+
+            await MainActor.run {
+                for dto in teamDTOs {
+                    if let existing = teams.first(where: { $0.backendId == dto.id }) {
+                        // Update existing team
+                        existing.name = dto.name
+                    } else {
+                        // Insert new team
+                        let newTeam = Team(
+                            name: dto.name,
+                            grade: .medium,
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newTeam)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh teams: \(error.localizedDescription)"
             }
         }
     }
@@ -266,9 +296,9 @@ struct TeamDetailView: View {
     @Query private var allClubs: [Club]
     @Environment(\.modelContext) private var modelContext
     @State private var showingPlayerSelection = false
-    @State private var isSyncing = false
-    @State private var syncMessage: String?
-    @State private var showingSyncAlert = false
+    @State private var saveState: SaveState = .idle
+    @State private var saveMessage: String = ""
+    @State private var showingSaveAlert = false
 
     var body: some View {
         Form {
@@ -336,21 +366,6 @@ struct TeamDetailView: View {
                 }
             }
 
-            if team.backendId != nil {
-                Section {
-                    Button(action: syncToBackend) {
-                        HStack {
-                            if isSyncing {
-                                ProgressView()
-                                    .padding(.trailing, 8)
-                            }
-                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
-                        }
-                    }
-                    .disabled(isSyncing)
-                }
-            }
-
             Section(header: HStack {
                 Text("Players (\(team.players.count))")
                 Spacer()
@@ -385,24 +400,50 @@ struct TeamDetailView: View {
         }
         .navigationTitle(team.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if team.backendId != nil {
+                    Button(action: saveToBackend) {
+                        switch saveState {
+                        case .idle:
+                            Label("Save", systemImage: "square.and.arrow.up")
+                        case .saving:
+                            ProgressView()
+                        case .success:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        case .error:
+                            Image(systemName: "exclamation.circle.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+                    .disabled(saveState == .saving)
+                }
+            }
+        }
         .sheet(isPresented: $showingPlayerSelection) {
             PlayerSelectionView(team: team)
         }
-        .alert("Sync Status", isPresented: $showingSyncAlert) {
+        .alert("Save Status", isPresented: $showingSaveAlert) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text(syncMessage ?? "")
+            Text(saveMessage)
+        }
+        .onChange(of: saveState) { oldValue, newValue in
+            if case .success = newValue {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    if case .success = saveState {
+                        saveState = .idle
+                    }
+                }
+            }
         }
     }
 
-    private func syncToBackend() {
-        guard let backendId = team.backendId else {
-            syncMessage = "Cannot sync: Team not linked to backend"
-            showingSyncAlert = true
-            return
-        }
+    private func saveToBackend() {
+        guard let backendId = team.backendId else { return }
 
-        isSyncing = true
+        saveState = .saving
         Task {
             do {
                 _ = try await ApiService.shared.updateTeam(
@@ -412,15 +453,15 @@ struct TeamDetailView: View {
                 )
 
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Team synced successfully"
-                    showingSyncAlert = true
+                    saveState = .success
+                    saveMessage = "Team saved successfully"
+                    showingSaveAlert = true
                 }
             } catch {
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Sync failed: \(error.localizedDescription)"
-                    showingSyncAlert = true
+                    saveState = .error(error.localizedDescription)
+                    saveMessage = "Save failed: \(error.localizedDescription)"
+                    showingSaveAlert = true
                 }
             }
         }
@@ -443,23 +484,94 @@ struct PlayerSelectionView: View {
     @Bindable var team: Team
     @Query private var allPlayers: [Player]
     @Environment(\.dismiss) private var dismiss
-    
+    @State private var searchText = ""
+
     var availablePlayers: [Player] {
         allPlayers.filter { player in
             player.isActive && !team.players.contains { $0.id == player.id }
         }
     }
-    
+
+    var filteredPlayers: [Player] {
+        if searchText.isEmpty {
+            return availablePlayers
+        } else {
+            return availablePlayers.filter { player in
+                player.displayName.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+    }
+
     var body: some View {
         NavigationView {
-            List {
-                ForEach(availablePlayers, id: \.id) { player in
-                    Button(action: {
-                        addPlayerToTeam(player)
-                    }) {
-                        PlayerRowView(player: player)
+            VStack(spacing: 0) {
+                // Search bar
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                    TextField("Search players...", text: $searchText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    if !searchText.isEmpty {
+                        Button(action: {
+                            searchText = ""
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                        }
                     }
-                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding()
+                .background(Color(.systemGroupedBackground))
+
+                // Player list with scroll
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(filteredPlayers, id: \.id) { player in
+                            Button(action: {
+                                addPlayerToTeam(player)
+                            }) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(player.displayName)
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+                                        HStack {
+                                            if let state = player.state {
+                                                Text(state.rawValue)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            Text("Handicap: \(String(format: "%.1f", player.currentHandicap))")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    Image(systemName: "plus.circle")
+                                        .foregroundColor(.blue)
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            Divider()
+                        }
+                    }
+                }
+
+                if filteredPlayers.isEmpty {
+                    VStack {
+                        Spacer()
+                        Text(searchText.isEmpty ? "No available players" : "No players found")
+                            .foregroundColor(.secondary)
+                            .font(.headline)
+                        if !searchText.isEmpty {
+                            Text("Try a different search term")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                        Spacer()
+                    }
                 }
             }
             .navigationTitle("Add Players")
@@ -473,7 +585,7 @@ struct PlayerSelectionView: View {
             }
         }
     }
-    
+
     private func addPlayerToTeam(_ player: Player) {
         withAnimation {
             team.players.append(player)

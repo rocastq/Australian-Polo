@@ -27,6 +27,9 @@ struct PlayerListView: View {
                 }
                 .onDelete(perform: deletePlayers)
             }
+            .refreshable {
+                await refreshPlayers()
+            }
             .navigationTitle("Players")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -41,6 +44,13 @@ struct PlayerListView: View {
             .onAppear {
                 fetchPlayers()
             }
+            .alert("Error", isPresented: .constant(errorMessage != nil)) {
+                Button("OK") { errorMessage = nil }
+            } message: {
+                if let error = errorMessage {
+                    Text(error)
+                }
+            }
         }
     }
 
@@ -48,28 +58,51 @@ struct PlayerListView: View {
         isLoadingPlayers = true
         Task {
             do {
+                print("🔄 Fetching players from API...")
                 let playerDTOs = try await ApiService.shared.getAllPlayers()
+                print("✅ Received \(playerDTOs.count) players from API")
 
                 // Save fetched players to SwiftData
                 await MainActor.run {
                     for dto in playerDTOs {
+                        print("📝 Processing player: \(dto.firstName) \(dto.surname) (ID: \(dto.id))")
                         // Check if player already exists by backendId
                         let existingPlayer = players.first { $0.backendId == dto.id }
 
                         if existingPlayer == nil {
                             // Create new player with backend ID
                             let newPlayer = Player(
-                                name: dto.name,
-                                handicap: 0.0, // Default handicap since backend doesn't provide it
+                                firstName: dto.firstName,
+                                surname: dto.surname,
+                                state: dto.state.flatMap { AustralianState(rawValue: $0) },
+                                handicapJun2025: dto.handicapJun2025,
                                 backendId: dto.id
                             )
+                            newPlayer.womensHandicapJun2025 = dto.womensHandicapJun2025
+                            newPlayer.handicapDec2026 = dto.handicapDec2026
+                            newPlayer.womensHandicapDec2026 = dto.womensHandicapDec2026
+                            newPlayer.position = dto.position
                             modelContext.insert(newPlayer)
+                            print("➕ Created new player: \(newPlayer.displayName)")
+                        } else {
+                            print("⏭️ Player already exists, skipping")
                         }
+                    }
+
+                    print("✅ Finished processing. Total players in DB: \(players.count)")
+
+                    // Explicitly save the context
+                    do {
+                        try modelContext.save()
+                        print("💾 [PlayerViews] Context saved successfully")
+                    } catch {
+                        print("❌ [PlayerViews] Failed to save context: \(error)")
                     }
 
                     isLoadingPlayers = false
                 }
             } catch {
+                print("❌ Error fetching players: \(error)")
                 await MainActor.run {
                     isLoadingPlayers = false
                     errorMessage = "Failed to fetch players: \(error.localizedDescription)"
@@ -103,18 +136,66 @@ struct PlayerListView: View {
             }
         }
     }
+
+    private func refreshPlayers() async {
+        do {
+            let playerDTOs = try await ApiService.shared.getAllPlayers()
+
+            await MainActor.run {
+                for dto in playerDTOs {
+                    if let existing = players.first(where: { $0.backendId == dto.id }) {
+                        // Update existing player with all backend fields
+                        existing.firstName = dto.firstName
+                        existing.surname = dto.surname
+                        existing.state = dto.state.flatMap { AustralianState(rawValue: $0) }
+                        existing.handicapJun2025 = dto.handicapJun2025
+                        existing.womensHandicapJun2025 = dto.womensHandicapJun2025
+                        existing.handicapDec2026 = dto.handicapDec2026
+                        existing.womensHandicapDec2026 = dto.womensHandicapDec2026
+                        existing.position = dto.position
+                    } else {
+                        // Insert new player
+                        let newPlayer = Player(
+                            firstName: dto.firstName,
+                            surname: dto.surname,
+                            state: dto.state.flatMap { AustralianState(rawValue: $0) },
+                            handicapJun2025: dto.handicapJun2025,
+                            backendId: dto.id
+                        )
+                        newPlayer.womensHandicapJun2025 = dto.womensHandicapJun2025
+                        newPlayer.handicapDec2026 = dto.handicapDec2026
+                        newPlayer.womensHandicapDec2026 = dto.womensHandicapDec2026
+                        newPlayer.position = dto.position
+                        modelContext.insert(newPlayer)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh players: \(error.localizedDescription)"
+            }
+        }
+    }
 }
 
 struct PlayerRowView: View {
     let player: Player
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(player.name)
+                Text(player.displayName)
                     .font(.headline)
+                if let state = player.state {
+                    Text(state.rawValue)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.gray.opacity(0.2))
+                        .cornerRadius(4)
+                }
                 Spacer()
-                Text("Handicap: \(player.handicap, specifier: "%.1f")")
+                Text("Handicap: \(player.currentHandicap, specifier: "%.1f")")
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -122,7 +203,7 @@ struct PlayerRowView: View {
                     .foregroundColor(.white)
                     .cornerRadius(8)
             }
-            
+
             HStack {
                 Text("Games: \(player.gamesPlayed)")
                     .font(.caption)
@@ -137,7 +218,7 @@ struct PlayerRowView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             if let club = player.club {
                 Text("Club: \(club.name)")
                     .font(.caption2)
@@ -153,8 +234,14 @@ struct PlayerRowView: View {
 struct AddPlayerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var handicap: Double = 0
+    @State private var firstName = ""
+    @State private var surname = ""
+    @State private var selectedState: AustralianState?
+    @State private var handicapJun2025: Double = 0
+    @State private var womensHandicapJun2025: Double = 0
+    @State private var handicapDec2026: Double = 0
+    @State private var womensHandicapDec2026: Double = 0
+    @State private var position = ""
     @Query private var clubs: [Club]
     @Query private var users: [User]
     @State private var selectedClub: Club?
@@ -166,13 +253,40 @@ struct AddPlayerView: View {
         NavigationView {
             Form {
                 Section(header: Text("Player Information")) {
-                    TextField("Name", text: $name)
+                    TextField("First Name", text: $firstName)
+                    TextField("Surname", text: $surname)
+
+                    Picker("State", selection: $selectedState) {
+                        Text("Select State").tag(AustralianState?.none)
+                        ForEach(AustralianState.allCases, id: \.self) { state in
+                            Text(state.rawValue).tag(AustralianState?.some(state))
+                        }
+                    }
+
+                    TextField("Position", text: $position)
+                }
+
+                Section(header: Text("Handicaps - June 2025")) {
+                    VStack(alignment: .leading) {
+                        Text("Open Handicap: \(handicapJun2025, specifier: "%.1f")")
+                        Slider(value: $handicapJun2025, in: -2...10, step: 0.5)
+                    }
 
                     VStack(alignment: .leading) {
-                        Text("Handicap: \(handicap, specifier: "%.1f")")
-                        Slider(value: $handicap, in: -2...10, step: 1) {
-                            Text("Handicap")
-                        }
+                        Text("Women's Handicap: \(womensHandicapJun2025, specifier: "%.1f")")
+                        Slider(value: $womensHandicapJun2025, in: -2...10, step: 0.5)
+                    }
+                }
+
+                Section(header: Text("Handicaps - December 2026")) {
+                    VStack(alignment: .leading) {
+                        Text("Open Handicap: \(handicapDec2026, specifier: "%.1f")")
+                        Slider(value: $handicapDec2026, in: -2...10, step: 0.5)
+                    }
+
+                    VStack(alignment: .leading) {
+                        Text("Women's Handicap: \(womensHandicapDec2026, specifier: "%.1f")")
+                        Slider(value: $womensHandicapDec2026, in: -2...10, step: 0.5)
                     }
                 }
 
@@ -216,7 +330,7 @@ struct AddPlayerView: View {
                         Button("Save") {
                             addPlayer()
                         }
-                        .disabled(name.isEmpty)
+                        .disabled(firstName.isEmpty || surname.isEmpty)
                     }
                 }
             }
@@ -231,18 +345,31 @@ struct AddPlayerView: View {
             do {
                 // Call API to create player
                 let playerDTO = try await ApiService.shared.createPlayer(
-                    name: name,
+                    firstName: firstName,
+                    surname: surname,
+                    state: selectedState?.rawValue,
+                    handicapJun2025: handicapJun2025,
+                    womensHandicapJun2025: womensHandicapJun2025,
+                    handicapDec2026: handicapDec2026,
+                    womensHandicapDec2026: womensHandicapDec2026,
                     teamId: nil,
-                    position: nil
+                    position: position.isEmpty ? nil : position,
+                    clubId: selectedClub?.backendId
                 )
 
                 // Save locally to SwiftData with backend ID
                 await MainActor.run {
                     let newPlayer = Player(
-                        name: name,
-                        handicap: handicap,
+                        firstName: firstName,
+                        surname: surname,
+                        state: selectedState,
+                        handicapJun2025: handicapJun2025,
                         backendId: playerDTO.id
                     )
+                    newPlayer.womensHandicapJun2025 = womensHandicapJun2025
+                    newPlayer.handicapDec2026 = handicapDec2026
+                    newPlayer.womensHandicapDec2026 = womensHandicapDec2026
+                    newPlayer.position = position.isEmpty ? nil : position
                     newPlayer.club = selectedClub
                     newPlayer.user = selectedUser
                     selectedUser?.playerProfile = newPlayer
@@ -267,68 +394,128 @@ struct PlayerDetailView: View {
     @Query private var allClubs: [Club]
     @Query private var allUsers: [User]
     @Environment(\.modelContext) private var modelContext
-    @State private var isSyncing = false
-    @State private var syncMessage: String?
-    @State private var showingSyncAlert = false
+    @State private var saveState: SaveState = .idle
+    @State private var saveMessage: String = ""
+    @State private var showingSaveAlert = false
+    @State private var positionText: String = ""
+
+    // Helper bindings to avoid type-checker complexity
+    private var handicapJun2025Binding: Binding<Double> {
+        Binding(
+            get: { player.handicapJun2025 ?? 0 },
+            set: { player.handicapJun2025 = $0 }
+        )
+    }
+
+    private var womensHandicapJun2025Binding: Binding<Double> {
+        Binding(
+            get: { player.womensHandicapJun2025 ?? 0 },
+            set: { player.womensHandicapJun2025 = $0 }
+        )
+    }
+
+    private var handicapDec2026Binding: Binding<Double> {
+        Binding(
+            get: { player.handicapDec2026 ?? 0 },
+            set: { player.handicapDec2026 = $0 }
+        )
+    }
+
+    private var womensHandicapDec2026Binding: Binding<Double> {
+        Binding(
+            get: { player.womensHandicapDec2026 ?? 0 },
+            set: { player.womensHandicapDec2026 = $0 }
+        )
+    }
+
+    private var stateBinding: Binding<AustralianState?> {
+        Binding(
+            get: { player.state },
+            set: { player.state = $0 }
+        )
+    }
+
+    private var userBinding: Binding<User?> {
+        Binding(
+            get: { player.user },
+            set: {
+                player.user?.playerProfile = nil
+                player.user = $0
+                $0?.playerProfile = player
+            }
+        )
+    }
+
+    private var clubBinding: Binding<Club?> {
+        Binding(
+            get: { player.club },
+            set: { player.club = $0 }
+        )
+    }
 
     var body: some View {
         Form {
             Section(header: Text("Player Information")) {
-                TextField("Name", text: $player.name)
+                TextField("First Name", text: $player.firstName)
+                TextField("Surname", text: $player.surname)
 
-                VStack(alignment: .leading) {
-                    Text("Handicap: \(player.handicap, specifier: "%.1f")")
-                    Slider(value: $player.handicap, in: -2...10, step: 1) {
-                        Text("Handicap")
+                Picker("State", selection: stateBinding) {
+                    Text("Select State").tag(AustralianState?.none)
+                    ForEach(AustralianState.allCases, id: \.self) { state in
+                        Text(state.rawValue).tag(AustralianState?.some(state))
                     }
                 }
 
-                DatePicker("Join Date", selection: $player.joinDate, displayedComponents: .date)
+                TextField("Position", text: $positionText)
+                    .onAppear { positionText = player.position ?? "" }
+                    .onChange(of: positionText) { _, newValue in
+                        player.position = newValue.isEmpty ? nil : newValue
+                    }
 
+                DatePicker("Join Date", selection: $player.joinDate, displayedComponents: .date)
                 Toggle("Active Player", isOn: $player.isActive)
             }
 
-            if player.backendId != nil {
-                Section {
-                    Button(action: syncToBackend) {
-                        HStack {
-                            if isSyncing {
-                                ProgressView()
-                                    .padding(.trailing, 8)
-                            }
-                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
-                        }
-                    }
-                    .disabled(isSyncing)
+            Section(header: Text("Handicaps - June 2025")) {
+                VStack(alignment: .leading) {
+                    Text("Open Handicap: \(player.handicapJun2025 ?? 0, specifier: "%.1f")")
+                    Slider(value: handicapJun2025Binding, in: -2...10, step: 0.5)
+                }
+
+                VStack(alignment: .leading) {
+                    Text("Women's Handicap: \(player.womensHandicapJun2025 ?? 0, specifier: "%.1f")")
+                    Slider(value: womensHandicapJun2025Binding, in: -2...10, step: 0.5)
+                }
+            }
+
+            Section(header: Text("Handicaps - December 2026")) {
+                VStack(alignment: .leading) {
+                    Text("Open Handicap: \(player.handicapDec2026 ?? 0, specifier: "%.1f")")
+                    Slider(value: handicapDec2026Binding, in: -2...10, step: 0.5)
+                }
+
+                VStack(alignment: .leading) {
+                    Text("Women's Handicap: \(player.womensHandicapDec2026 ?? 0, specifier: "%.1f")")
+                    Slider(value: womensHandicapDec2026Binding, in: -2...10, step: 0.5)
                 }
             }
 
             Section(header: Text("Associations")) {
-                Picker("User Account", selection: Binding<User?>(
-                    get: { player.user },
-                    set: { 
-                        player.user?.playerProfile = nil
-                        player.user = $0
-                        $0?.playerProfile = player
-                    }
-                )) {
+                Picker("User Account", selection: userBinding) {
                     Text("No User Account").tag(User?.none)
                     ForEach(allUsers.filter { $0.isActive && $0.role == .player && ($0.playerProfile == nil || $0.playerProfile?.id == player.id) }, id: \.id) { user in
                         Text(user.name).tag(User?.some(user))
                     }
                 }
-                
-                Picker("Club", selection: Binding<Club?>(
-                    get: { player.club },
-                    set: { player.club = $0 }
-                )) {
+
+                Picker("Club", selection: clubBinding) {
                     Text("No Club").tag(Club?.none)
                     ForEach(allClubs.filter { $0.isActive }, id: \.id) { club in
                         Text(club.name).tag(Club?.some(club))
                     }
                 }
             }
-            
+
             Section(header: Text("Statistics")) {
                 HStack {
                     Text("Games Played")
@@ -336,35 +523,35 @@ struct PlayerDetailView: View {
                     Text("\(player.gamesPlayed)")
                         .foregroundColor(.secondary)
                 }
-                
+
                 HStack {
                     Text("Goals Scored")
                     Spacer()
                     Text("\(player.goalsScored)")
                         .foregroundColor(.secondary)
                 }
-                
+
                 HStack {
                     Text("Wins")
                     Spacer()
                     Text("\(player.wins)")
                         .foregroundColor(.green)
                 }
-                
+
                 HStack {
                     Text("Losses")
                     Spacer()
                     Text("\(player.losses)")
                         .foregroundColor(.red)
                 }
-                
+
                 HStack {
                     Text("Draws")
                     Spacer()
                     Text("\(player.draws)")
                         .foregroundColor(.orange)
                 }
-                
+
                 if player.gamesPlayed > 0 {
                     HStack {
                         Text("Win Percentage")
@@ -374,7 +561,7 @@ struct PlayerDetailView: View {
                     }
                 }
             }
-            
+
             if !player.teams.isEmpty {
                 Section(header: Text("Teams")) {
                     ForEach(player.teams, id: \.id) { team in
@@ -384,7 +571,7 @@ struct PlayerDetailView: View {
                     }
                 }
             }
-            
+
             if !player.horses.isEmpty {
                 Section(header: Text("Horses")) {
                     ForEach(player.horses.filter { $0.isActive }, id: \.id) { horse in
@@ -394,7 +581,7 @@ struct PlayerDetailView: View {
                     }
                 }
             }
-            
+
             if !player.duties.isEmpty {
                 Section(header: Text("Recent Duties")) {
                     ForEach(player.duties.sorted { $0.date > $1.date }.prefix(5), id: \.id) { duty in
@@ -405,42 +592,75 @@ struct PlayerDetailView: View {
                 }
             }
         }
-        .navigationTitle(player.name)
+        .navigationTitle(player.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Sync Status", isPresented: $showingSyncAlert) {
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if player.backendId != nil {
+                    Button(action: saveToBackend) {
+                        switch saveState {
+                        case .idle:
+                            Label("Save", systemImage: "square.and.arrow.up")
+                        case .saving:
+                            ProgressView()
+                        case .success:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        case .error:
+                            Image(systemName: "exclamation.circle.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+                    .disabled(saveState == .saving)
+                }
+            }
+        }
+        .alert("Save Status", isPresented: $showingSaveAlert) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text(syncMessage ?? "")
+            Text(saveMessage)
+        }
+        .onChange(of: saveState) { oldValue, newValue in
+            if case .success = newValue {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    if case .success = saveState {
+                        saveState = .idle
+                    }
+                }
+            }
         }
     }
 
-    private func syncToBackend() {
-        guard let backendId = player.backendId else {
-            syncMessage = "Cannot sync: Player not linked to backend"
-            showingSyncAlert = true
-            return
-        }
+    private func saveToBackend() {
+        guard let backendId = player.backendId else { return }
 
-        isSyncing = true
+        saveState = .saving
         Task {
             do {
                 _ = try await ApiService.shared.updatePlayer(
                     id: backendId,
-                    name: player.name,
+                    firstName: player.firstName,
+                    surname: player.surname,
+                    state: player.state?.rawValue,
+                    handicapJun2025: player.handicapJun2025,
+                    womensHandicapJun2025: player.womensHandicapJun2025,
+                    handicapDec2026: player.handicapDec2026,
+                    womensHandicapDec2026: player.womensHandicapDec2026,
                     teamId: nil,
-                    position: nil
+                    position: player.position,
+                    clubId: player.club?.backendId
                 )
 
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Player synced successfully"
-                    showingSyncAlert = true
+                    saveState = .success
+                    saveMessage = "Player saved successfully"
+                    showingSaveAlert = true
                 }
             } catch {
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Sync failed: \(error.localizedDescription)"
-                    showingSyncAlert = true
+                    saveState = .error(error.localizedDescription)
+                    saveMessage = "Save failed: \(error.localizedDescription)"
+                    showingSaveAlert = true
                 }
             }
         }
