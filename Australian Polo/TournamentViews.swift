@@ -56,6 +56,9 @@ struct TournamentListView: View {
                         }
                         .onDelete(perform: deleteTournaments)
                     }
+                    .refreshable {
+                        await refreshTournaments()
+                    }
 
                 case .matches:
                     List {
@@ -74,6 +77,9 @@ struct TournamentListView: View {
                             }
                         }
                         .onDelete(perform: deleteMatches)
+                    }
+                    .refreshable {
+                        await refreshMatches()
                     }
                 }
             }
@@ -117,8 +123,8 @@ struct TournamentListView: View {
 
                         if existingTournament == nil {
                             // Parse dates from backend format (YYYY-MM-DD)
-                            let startDate = dto.start_date.flatMap { Date.apiDate(from: $0) } ?? Date()
-                            let endDate = dto.end_date.flatMap { Date.apiDate(from: $0) } ?? Date()
+                            let startDate = dto.startDate.flatMap { Date.apiDate(from: $0) } ?? Date()
+                            let endDate = dto.endDate.flatMap { Date.apiDate(from: $0) } ?? Date()
                             let location = dto.location ?? "Unknown"
 
                             // Create new tournament with backend ID
@@ -141,6 +147,78 @@ struct TournamentListView: View {
                     isLoadingTournaments = false
                     errorMessage = "Failed to fetch tournaments: \(error.localizedDescription)"
                 }
+            }
+        }
+    }
+
+    private func refreshTournaments() async {
+        do {
+            let tournamentDTOs = try await ApiService.shared.getAllTournaments()
+
+            await MainActor.run {
+                for dto in tournamentDTOs {
+                    if let existing = tournaments.first(where: { $0.backendId == dto.id }) {
+                        // Update existing tournament
+                        existing.name = dto.name
+                        existing.location = dto.location ?? existing.location
+                        if let startStr = dto.startDate, let start = Date.apiDate(from: startStr) {
+                            existing.startDate = start
+                        }
+                        if let endStr = dto.endDate, let end = Date.apiDate(from: endStr) {
+                            existing.endDate = end
+                        }
+                    } else {
+                        // Insert new tournament
+                        let startDate = dto.startDate.flatMap { Date.apiDate(from: $0) } ?? Date()
+                        let endDate = dto.endDate.flatMap { Date.apiDate(from: $0) } ?? Date()
+                        let newTournament = Tournament(
+                            name: dto.name,
+                            grade: .medium,
+                            startDate: startDate,
+                            endDate: endDate,
+                            location: dto.location ?? "Unknown",
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newTournament)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh tournaments: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshMatches() async {
+        // Fetch matches for all tournaments that have backend IDs
+        let tournamentsWithBackendIds = tournaments.filter { $0.backendId != nil }
+
+        for tournament in tournamentsWithBackendIds {
+            guard let backendId = tournament.backendId else { continue }
+
+            do {
+                let matchDTOs = try await ApiService.shared.getMatchesByTournament(tournamentId: backendId)
+
+                await MainActor.run {
+                    for dto in matchDTOs {
+                        if let existing = matches.first(where: { $0.backendId == dto.id }) {
+                            // Update existing match
+                            if let timeStr = dto.scheduledTime, let date = Date.apiDate(from: timeStr) {
+                                existing.date = date
+                            }
+                            if let resultStr = dto.result, let result = MatchResult(rawValue: resultStr) {
+                                existing.result = result
+                            }
+                            // Note: Backend doesn't provide scores, keeping local values
+                        }
+                        // Note: New match insertion would require more complex logic
+                        // to link teams, so we only update existing matches here
+                    }
+                }
+            } catch {
+                // Continue with other tournaments if one fails
+                continue
             }
         }
     }
@@ -233,8 +311,9 @@ struct TournamentRowView: View {
 struct AddTournamentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Query private var clubs: [Club]
     @State private var name = ""
-    @State private var location = ""
+    @State private var selectedClub: Club?
     @State private var selectedGrade: TournamentGrade = .medium
     @State private var startDate = Date()
     @State private var endDate = Date().addingTimeInterval(7 * 24 * 60 * 60) // 7 days later
@@ -246,7 +325,13 @@ struct AddTournamentView: View {
             Form {
                 Section(header: Text("Tournament Information")) {
                     TextField("Name", text: $name)
-                    TextField("Location", text: $location)
+
+                    Picker("Club/Location", selection: $selectedClub) {
+                        Text("Select Club").tag(nil as Club?)
+                        ForEach(clubs.filter { $0.isActive }) { club in
+                            Text("\(club.name) - \(club.location)").tag(club as Club?)
+                        }
+                    }
 
                     Picker("Grade", selection: $selectedGrade) {
                         ForEach(TournamentGrade.allCases, id: \.self) { grade in
@@ -284,7 +369,7 @@ struct AddTournamentView: View {
                         Button("Save") {
                             addTournament()
                         }
-                        .disabled(name.isEmpty || location.isEmpty)
+                        .disabled(name.isEmpty || selectedClub == nil)
                     }
                 }
             }
@@ -292,6 +377,8 @@ struct AddTournamentView: View {
     }
 
     private func addTournament() {
+        guard let club = selectedClub else { return }
+
         isLoading = true
         errorMessage = nil
 
@@ -303,7 +390,7 @@ struct AddTournamentView: View {
                 // Call API to create tournament
                 let tournamentDTO = try await ApiService.shared.createTournament(
                     name: name,
-                    location: location,
+                    location: club.name,
                     startDate: startDateString,
                     endDate: endDateString
                 )
@@ -315,9 +402,10 @@ struct AddTournamentView: View {
                         grade: selectedGrade,
                         startDate: startDate,
                         endDate: endDate,
-                        location: location,
+                        location: club.name,
                         backendId: tournamentDTO.id
                     )
+                    newTournament.club = club
                     modelContext.insert(newTournament)
                     isLoading = false
                     dismiss()
@@ -339,15 +427,33 @@ struct TournamentDetailView: View {
     @Query private var allClubs: [Club]
     @Query private var allFields: [Field]
     @Environment(\.modelContext) private var modelContext
-    @State private var isSyncing = false
-    @State private var syncMessage: String?
-    @State private var showingSyncAlert = false
+    @State private var saveState: SaveState = .idle
+    @State private var saveMessage: String = ""
+    @State private var showingSaveAlert = false
 
     var body: some View {
         Form {
             Section(header: Text("Tournament Information")) {
                 TextField("Name", text: $tournament.name)
+
+                Picker("Club/Location", selection: Binding<Club?>(
+                    get: { tournament.club },
+                    set: { newClub in
+                        tournament.club = newClub
+                        if let club = newClub {
+                            tournament.location = club.name
+                        }
+                    }
+                )) {
+                    Text("No Club").tag(Club?.none)
+                    ForEach(allClubs.filter { $0.isActive }, id: \.id) { club in
+                        Text("\(club.name) - \(club.location)").tag(Club?.some(club))
+                    }
+                }
+
                 TextField("Location", text: $tournament.location)
+                    .foregroundColor(.secondary)
+                    .disabled(true)
 
                 Picker("Grade", selection: $tournament.grade) {
                     ForEach(TournamentGrade.allCases, id: \.self) { grade in
@@ -364,15 +470,6 @@ struct TournamentDetailView: View {
             }
 
             Section(header: Text("Associations")) {
-                Picker("Club", selection: Binding<Club?>(
-                    get: { tournament.club },
-                    set: { tournament.club = $0 }
-                )) {
-                    Text("No Club").tag(Club?.none)
-                    ForEach(allClubs.filter { $0.isActive }, id: \.id) { club in
-                        Text(club.name).tag(Club?.some(club))
-                    }
-                }
 
                 Picker("Field", selection: Binding<Field?>(
                     get: { tournament.field },
@@ -401,21 +498,6 @@ struct TournamentDetailView: View {
                 }
             }
 
-            if tournament.backendId != nil {
-                Section {
-                    Button(action: syncToBackend) {
-                        HStack {
-                            if isSyncing {
-                                ProgressView()
-                                    .padding(.trailing, 8)
-                            }
-                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
-                        }
-                    }
-                    .disabled(isSyncing)
-                }
-            }
-
             if !tournament.matches.isEmpty {
                 Section(header: Text("Matches")) {
                     ForEach(tournament.matches, id: \.id) { match in
@@ -428,21 +510,47 @@ struct TournamentDetailView: View {
         }
         .navigationTitle(tournament.name)
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Sync Status", isPresented: $showingSyncAlert) {
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if tournament.backendId != nil {
+                    Button(action: saveToBackend) {
+                        switch saveState {
+                        case .idle:
+                            Label("Save", systemImage: "square.and.arrow.up")
+                        case .saving:
+                            ProgressView()
+                        case .success:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        case .error:
+                            Image(systemName: "exclamation.circle.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+                    .disabled(saveState == .saving)
+                }
+            }
+        }
+        .alert("Save Status", isPresented: $showingSaveAlert) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text(syncMessage ?? "")
+            Text(saveMessage)
+        }
+        .onChange(of: saveState) { oldValue, newValue in
+            if case .success = newValue {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    if case .success = saveState {
+                        saveState = .idle
+                    }
+                }
+            }
         }
     }
 
-    private func syncToBackend() {
-        guard let backendId = tournament.backendId else {
-            syncMessage = "Cannot sync: Tournament not linked to backend"
-            showingSyncAlert = true
-            return
-        }
+    private func saveToBackend() {
+        guard let backendId = tournament.backendId else { return }
 
-        isSyncing = true
+        saveState = .saving
         Task {
             do {
                 let startDateString = tournament.startDate.apiISODateString()
@@ -457,15 +565,15 @@ struct TournamentDetailView: View {
                 )
 
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Tournament synced successfully"
-                    showingSyncAlert = true
+                    saveState = .success
+                    saveMessage = "Tournament saved successfully"
+                    showingSaveAlert = true
                 }
             } catch {
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Sync failed: \(error.localizedDescription)"
-                    showingSyncAlert = true
+                    saveState = .error(error.localizedDescription)
+                    saveMessage = "Save failed: \(error.localizedDescription)"
+                    showingSaveAlert = true
                 }
             }
         }

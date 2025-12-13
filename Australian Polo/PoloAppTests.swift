@@ -28,16 +28,17 @@ struct PoloAppTests {
     
     @Test("Player Handicap")
     func testPlayerHandicap() throws {
-        let player = Player(name: "Test Player", handicap: 6.5)
-        
-        #expect(player.handicap == 6.5)
+        let player = Player(firstName: "Test", surname: "Player", handicapJun2025: 6.5)
+
+        #expect(player.currentHandicap == 6.5)
+        #expect(player.displayName == "Test Player")
         #expect(player.gamesPlayed == 0)
         #expect(player.winPercentage == 0.0)
-        
+
         // Test win percentage calculation
         player.gamesPlayed = 10
         player.wins = 7
-        
+
         #expect(player.winPercentage == 70.0)
     }
     
@@ -102,12 +103,12 @@ struct PoloAppTests {
     
     @Test("Duty Assignment")
     func testDutyAssignment() throws {
-        let player = Player(name: "Umpire Player", handicap: 4.0)
+        let player = Player(firstName: "Umpire", surname: "Player", handicapJun2025: 4.0)
         let duty = Duty(type: .umpire, date: Date())
         duty.player = player
-        
+
         #expect(duty.type == .umpire)
-        #expect(duty.player?.name == "Umpire Player")
+        #expect(duty.player?.displayName == "Umpire Player")
     }
     
     @Test("Club Team Relationship")
@@ -198,24 +199,28 @@ struct PoloAppTests {
     @Test("Club Player Relationship")
     func testClubPlayerRelationship() throws {
         let club = Club(name: "Sydney Polo Club", location: "Sydney")
-        let player1 = Player(name: "Player One", handicap: 5.0)
-        let player2 = Player(name: "Player Two", handicap: 7.0)
-        
+        let player1 = Player(firstName: "Player", surname: "One", handicapJun2025: 5.0)
+        let player2 = Player(firstName: "Player", surname: "Two", handicapJun2025: 7.0)
+
         player1.club = club
         player2.club = club
-        
+
         #expect(player1.club?.name == "Sydney Polo Club")
         #expect(player2.club?.name == "Sydney Polo Club")
+        #expect(player1.displayName == "Player One")
+        #expect(player2.displayName == "Player Two")
     }
     
     @Test("Tournament Grades")
     func testTournamentGrades() throws {
         let grades = TournamentGrade.allCases
-        
+
         #expect(grades.contains(.high))
         #expect(grades.contains(.medium))
         #expect(grades.contains(.low))
-        #expect(grades.count == 3)
+        #expect(grades.contains(.zero))
+        #expect(grades.contains(.subzero))
+        #expect(grades.count == 5)
     }
     
     @Test("Horse Gender and Color")

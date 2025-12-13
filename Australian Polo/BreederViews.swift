@@ -27,6 +27,9 @@ struct BreederListView: View {
                 }
                 .onDelete(perform: deleteBreeders)
             }
+            .refreshable {
+                await refreshBreeders()
+            }
             .navigationTitle("Breeders")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -60,7 +63,7 @@ struct BreederListView: View {
                             // Create new breeder with backend ID
                             let newBreeder = Breeder(
                                 name: dto.name,
-                                location: dto.contact_info ?? "Unknown",
+                                location: dto.contactInfo ?? "Unknown",
                                 backendId: dto.id
                             )
                             modelContext.insert(newBreeder)
@@ -100,6 +103,36 @@ struct BreederListView: View {
                     // If no backend ID, just mark as inactive locally
                     breeder.isActive = false
                 }
+            }
+        }
+    }
+
+    private func refreshBreeders() async {
+        do {
+            let breederDTOs = try await ApiService.shared.getAllBreeders()
+
+            await MainActor.run {
+                for dto in breederDTOs {
+                    if let existing = breeders.first(where: { $0.backendId == dto.id }) {
+                        // Update existing breeder
+                        existing.name = dto.name
+                        if let contactInfo = dto.contactInfo {
+                            existing.location = contactInfo
+                        }
+                    } else {
+                        // Insert new breeder
+                        let newBreeder = Breeder(
+                            name: dto.name,
+                            location: dto.contactInfo ?? "Unknown",
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newBreeder)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh breeders: \(error.localizedDescription)"
             }
         }
     }
@@ -240,9 +273,9 @@ struct BreederDetailView: View {
     @Bindable var breeder: Breeder
     @Query private var allUsers: [User]
     @Environment(\.modelContext) private var modelContext
-    @State private var isSyncing = false
-    @State private var syncMessage: String?
-    @State private var showingSyncAlert = false
+    @State private var saveState: SaveState = .idle
+    @State private var saveMessage: String = ""
+    @State private var showingSaveAlert = false
 
     var body: some View {
         Form {
@@ -252,21 +285,6 @@ struct BreederDetailView: View {
                 DatePicker("Established Date", selection: $breeder.establishedDate, displayedComponents: .date)
 
                 Toggle("Active Breeder", isOn: $breeder.isActive)
-            }
-
-            if breeder.backendId != nil {
-                Section {
-                    Button(action: syncToBackend) {
-                        HStack {
-                            if isSyncing {
-                                ProgressView()
-                                    .padding(.trailing, 8)
-                            }
-                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
-                        }
-                    }
-                    .disabled(isSyncing)
-                }
             }
 
             Section(header: Text("User Account")) {
@@ -313,21 +331,47 @@ struct BreederDetailView: View {
         }
         .navigationTitle(breeder.name)
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Sync Status", isPresented: $showingSyncAlert) {
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if breeder.backendId != nil {
+                    Button(action: saveToBackend) {
+                        switch saveState {
+                        case .idle:
+                            Label("Save", systemImage: "square.and.arrow.up")
+                        case .saving:
+                            ProgressView()
+                        case .success:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        case .error:
+                            Image(systemName: "exclamation.circle.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+                    .disabled(saveState == .saving)
+                }
+            }
+        }
+        .alert("Save Status", isPresented: $showingSaveAlert) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text(syncMessage ?? "")
+            Text(saveMessage)
+        }
+        .onChange(of: saveState) { oldValue, newValue in
+            if case .success = newValue {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    if case .success = saveState {
+                        saveState = .idle
+                    }
+                }
+            }
         }
     }
 
-    private func syncToBackend() {
-        guard let backendId = breeder.backendId else {
-            syncMessage = "Cannot sync: Breeder not linked to backend"
-            showingSyncAlert = true
-            return
-        }
+    private func saveToBackend() {
+        guard let backendId = breeder.backendId else { return }
 
-        isSyncing = true
+        saveState = .saving
         Task {
             do {
                 _ = try await ApiService.shared.updateBreeder(
@@ -337,15 +381,15 @@ struct BreederDetailView: View {
                 )
 
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Breeder synced successfully"
-                    showingSyncAlert = true
+                    saveState = .success
+                    saveMessage = "Breeder saved successfully"
+                    showingSaveAlert = true
                 }
             } catch {
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Sync failed: \(error.localizedDescription)"
-                    showingSyncAlert = true
+                    saveState = .error(error.localizedDescription)
+                    saveMessage = "Save failed: \(error.localizedDescription)"
+                    showingSaveAlert = true
                 }
             }
         }
