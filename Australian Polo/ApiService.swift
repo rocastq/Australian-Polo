@@ -53,51 +53,107 @@ struct TournamentDTO: Codable, Identifiable {
     let id: Int
     let name: String
     let location: String?
-    let start_date: String?
-    let end_date: String?
+    let startDate: String?
+    let endDate: String?
 }
 
 struct TeamDTO: Codable, Identifiable {
     let id: Int
     let name: String
     let coach: String?
+    let clubId: Int?
+    let createdAt: String?
+    let updatedAt: String?
 }
 
 struct PlayerDTO: Codable, Identifiable {
     let id: Int
-    let name: String
-    let team_id: Int?
+    let firstName: String
+    let surname: String
+    let state: String?
+    let handicapJun2025: Double?
+    let womensHandicapJun2025: Double?
+    let handicapDec2026: Double?
+    let womensHandicapDec2026: Double?
+    let teamId: Int?
     let position: String?
+    let clubId: Int?
+    let createdAt: String?
+    let updatedAt: String?
+
+    // Convenience computed property for display name
+    var displayName: String {
+        "\(firstName) \(surname)"
+    }
 }
 
 struct HorseDTO: Codable, Identifiable {
     let id: Int
     let name: String
     let pedigree: [String: String]?
-    let breeder_id: Int?
+    let breederId: Int?
+    let owner: String?
+    let tamer: String?
+    let createdAt: String?
+    let updatedAt: String?
 }
 
 struct BreederDTO: Codable, Identifiable {
     let id: Int
     let name: String
-    let contact_info: String?
+    let contactInfo: String?
+    let createdAt: String?
+    let updatedAt: String?
 }
 
 struct AwardDTO: Codable, Identifiable {
     let id: Int
     let title: String
     let description: String?
-    let entity_type: String?
-    let entity_id: Int?
+    let entityType: String?
+    let entityId: Int?
 }
 
 struct MatchDTO: Codable, Identifiable {
     let id: Int
-    let tournament_id: Int
-    let team1_id: Int
-    let team2_id: Int
-    let scheduled_time: String?
+    let tournamentId: Int
+    let team1Id: Int
+    let team2Id: Int
+    let scheduledTime: String?
     let result: String?
+}
+
+struct ClubDTO: Codable, Identifiable {
+    let id: Int
+    let name: String
+    let location: String?
+    let foundedDate: String?
+    let isActive: Int?
+    let createdAt: String?
+    let updatedAt: String?
+}
+
+struct FieldDTO: Codable, Identifiable {
+    let id: Int
+    let name: String
+    let location: String?
+    let grade: String?
+    let isActive: Int?
+    let createdAt: String?
+    let updatedAt: String?
+}
+
+struct DutyDTO: Codable, Identifiable {
+    let id: Int
+    let type: String
+    let date: String?
+    let notes: String?
+    let playerId: Int?
+    let matchId: Int?
+    let playerName: String?
+    let matchTime: String?
+    let createdAt: String?
+    let updatedAt: String?
 }
 
 // MARK: - Request Bodies
@@ -116,9 +172,16 @@ struct CreateOrUpdateTeamRequest: Codable {
 }
 
 struct CreateOrUpdatePlayerRequest: Codable {
-    let name: String
+    let first_name: String
+    let surname: String
+    let state: String?
+    let handicap_jun_2025: Double?
+    let womens_handicap_jun_2025: Double?
+    let handicap_dec_2026: Double?
+    let womens_handicap_dec_2026: Double?
     let team_id: Int?
     let position: String?
+    let club_id: Int?
 }
 
 struct CreateOrUpdateHorseRequest: Codable {
@@ -145,6 +208,26 @@ struct CreateOrUpdateMatchRequest: Codable {
     let team2_id: Int
     let scheduled_time: String
     let result: String?
+}
+
+struct CreateOrUpdateClubRequest: Codable {
+    let name: String
+    let location: String?
+    let founded_date: String?
+}
+
+struct CreateOrUpdateFieldRequest: Codable {
+    let name: String
+    let location: String?
+    let grade: String?
+}
+
+struct CreateOrUpdateDutyRequest: Codable {
+    let type: String
+    let date: String?
+    let notes: String?
+    let player_id: Int?
+    let match_id: Int?
 }
 
 // MARK: - API Error (using shared enum from AuthenticationService)
@@ -270,7 +353,7 @@ class ApiService {
 
     // MARK: - Tournament APIs
     func getAllTournaments() async throws -> [TournamentDTO] {
-        guard let url = makeURL("/tournaments") else { throw URLError(.badURL) }
+        guard let url = makeURL("/tournaments?limit=1000") else { throw URLError(.badURL) }
         let (response, _): (PaginatedResponse<TournamentDTO>, HTTPURLResponse) = try await request(url)
         return response.data
     }
@@ -315,7 +398,7 @@ class ApiService {
 
     // MARK: - Team APIs
     func getAllTeams() async throws -> [TeamDTO] {
-        guard let url = makeURL("/teams") else { throw URLError(.badURL) }
+        guard let url = makeURL("/teams?limit=1000") else { throw URLError(.badURL) }
         let (response, _): (PaginatedResponse<TeamDTO>, HTTPURLResponse) = try await request(url)
         return response.data
     }
@@ -343,22 +426,68 @@ class ApiService {
 
     // MARK: - Player APIs
     func getAllPlayers() async throws -> [PlayerDTO] {
-        guard let url = makeURL("/players") else { throw URLError(.badURL) }
+        guard let url = makeURL("/players?limit=1000") else { throw URLError(.badURL) }
         let (response, _): (PaginatedResponse<PlayerDTO>, HTTPURLResponse) = try await request(url)
+        print("📊 Players API returned \(response.data.count) players (total: \(response.pagination?.total ?? 0))")
         return response.data
     }
 
-    func createPlayer(name: String, teamId: Int?, position: String?) async throws -> PlayerDTO {
+    func createPlayer(
+        firstName: String,
+        surname: String,
+        state: String?,
+        handicapJun2025: Double?,
+        womensHandicapJun2025: Double?,
+        handicapDec2026: Double?,
+        womensHandicapDec2026: Double?,
+        teamId: Int?,
+        position: String?,
+        clubId: Int?
+    ) async throws -> PlayerDTO {
         guard let url = makeURL("/players") else { throw URLError(.badURL) }
-        let bodyObj = CreateOrUpdatePlayerRequest(name: name, team_id: teamId, position: position)
+        let bodyObj = CreateOrUpdatePlayerRequest(
+            first_name: firstName,
+            surname: surname,
+            state: state,
+            handicap_jun_2025: handicapJun2025,
+            womens_handicap_jun_2025: womensHandicapJun2025,
+            handicap_dec_2026: handicapDec2026,
+            womens_handicap_dec_2026: womensHandicapDec2026,
+            team_id: teamId,
+            position: position,
+            club_id: clubId
+        )
         let bodyData = try JSONEncoder().encode(bodyObj)
         let (dto, _): (PlayerDTO, HTTPURLResponse) = try await request(url, method: "POST", body: bodyData)
         return dto
     }
 
-    func updatePlayer(id: Int, name: String, teamId: Int?, position: String?) async throws -> PlayerDTO {
+    func updatePlayer(
+        id: Int,
+        firstName: String,
+        surname: String,
+        state: String?,
+        handicapJun2025: Double?,
+        womensHandicapJun2025: Double?,
+        handicapDec2026: Double?,
+        womensHandicapDec2026: Double?,
+        teamId: Int?,
+        position: String?,
+        clubId: Int?
+    ) async throws -> PlayerDTO {
         guard let url = makeURL("/players/\(id)") else { throw URLError(.badURL) }
-        let bodyObj = CreateOrUpdatePlayerRequest(name: name, team_id: teamId, position: position)
+        let bodyObj = CreateOrUpdatePlayerRequest(
+            first_name: firstName,
+            surname: surname,
+            state: state,
+            handicap_jun_2025: handicapJun2025,
+            womens_handicap_jun_2025: womensHandicapJun2025,
+            handicap_dec_2026: handicapDec2026,
+            womens_handicap_dec_2026: womensHandicapDec2026,
+            team_id: teamId,
+            position: position,
+            club_id: clubId
+        )
         let bodyData = try JSONEncoder().encode(bodyObj)
         let (dto, _): (PlayerDTO, HTTPURLResponse) = try await request(url, method: "PUT", body: bodyData)
         return dto
@@ -371,7 +500,7 @@ class ApiService {
 
     // MARK: - Horse APIs
     func getAllHorses() async throws -> [HorseDTO] {
-        guard let url = makeURL("/horses") else { throw URLError(.badURL) }
+        guard let url = makeURL("/horses?limit=1000") else { throw URLError(.badURL) }
         let (response, _): (PaginatedResponse<HorseDTO>, HTTPURLResponse) = try await request(url)
         return response.data
     }
@@ -399,7 +528,7 @@ class ApiService {
 
     // MARK: - Breeder APIs
     func getAllBreeders() async throws -> [BreederDTO] {
-        guard let url = makeURL("/breeders") else { throw URLError(.badURL) }
+        guard let url = makeURL("/breeders?limit=1000") else { throw URLError(.badURL) }
         let (response, _): (PaginatedResponse<BreederDTO>, HTTPURLResponse) = try await request(url)
         return response.data
     }
@@ -427,7 +556,7 @@ class ApiService {
 
     // MARK: - Award APIs
     func getAllAwards() async throws -> [AwardDTO] {
-        guard let url = makeURL("/awards") else { throw URLError(.badURL) }
+        guard let url = makeURL("/awards?limit=1000") else { throw URLError(.badURL) }
         let (dtos, _): ([AwardDTO], HTTPURLResponse) = try await request(url)
         return dtos
     }
@@ -497,6 +626,90 @@ class ApiService {
 
     func deleteMatch(id: Int) async throws {
         guard let url = makeURL("/matches/\(id)") else { throw URLError(.badURL) }
+        _ = try await requestNoResponse(url)
+    }
+
+    // MARK: - Club APIs
+    func getAllClubs() async throws -> [ClubDTO] {
+        guard let url = makeURL("/clubs?limit=1000") else { throw URLError(.badURL) }
+        let (response, _): (PaginatedResponse<ClubDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
+    }
+
+    func createClub(name: String, location: String?, foundedDate: String?) async throws -> ClubDTO {
+        guard let url = makeURL("/clubs") else { throw URLError(.badURL) }
+        let bodyObj = CreateOrUpdateClubRequest(name: name, location: location, founded_date: foundedDate)
+        let bodyData = try JSONEncoder().encode(bodyObj)
+        let (dto, _): (ClubDTO, HTTPURLResponse) = try await request(url, method: "POST", body: bodyData)
+        return dto
+    }
+
+    func updateClub(id: Int, name: String, location: String?, foundedDate: String?) async throws -> ClubDTO {
+        guard let url = makeURL("/clubs/\(id)") else { throw URLError(.badURL) }
+        let bodyObj = CreateOrUpdateClubRequest(name: name, location: location, founded_date: foundedDate)
+        let bodyData = try JSONEncoder().encode(bodyObj)
+        let (dto, _): (ClubDTO, HTTPURLResponse) = try await request(url, method: "PUT", body: bodyData)
+        return dto
+    }
+
+    func deleteClub(id: Int) async throws {
+        guard let url = makeURL("/clubs/\(id)") else { throw URLError(.badURL) }
+        _ = try await requestNoResponse(url)
+    }
+
+    // MARK: - Field APIs
+    func getAllFields() async throws -> [FieldDTO] {
+        guard let url = makeURL("/fields?limit=1000") else { throw URLError(.badURL) }
+        let (response, _): (PaginatedResponse<FieldDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
+    }
+
+    func createField(name: String, location: String?, grade: String?) async throws -> FieldDTO {
+        guard let url = makeURL("/fields") else { throw URLError(.badURL) }
+        let bodyObj = CreateOrUpdateFieldRequest(name: name, location: location, grade: grade)
+        let bodyData = try JSONEncoder().encode(bodyObj)
+        let (dto, _): (FieldDTO, HTTPURLResponse) = try await request(url, method: "POST", body: bodyData)
+        return dto
+    }
+
+    func updateField(id: Int, name: String, location: String?, grade: String?) async throws -> FieldDTO {
+        guard let url = makeURL("/fields/\(id)") else { throw URLError(.badURL) }
+        let bodyObj = CreateOrUpdateFieldRequest(name: name, location: location, grade: grade)
+        let bodyData = try JSONEncoder().encode(bodyObj)
+        let (dto, _): (FieldDTO, HTTPURLResponse) = try await request(url, method: "PUT", body: bodyData)
+        return dto
+    }
+
+    func deleteField(id: Int) async throws {
+        guard let url = makeURL("/fields/\(id)") else { throw URLError(.badURL) }
+        _ = try await requestNoResponse(url)
+    }
+
+    // MARK: - Duty APIs
+    func getAllDuties() async throws -> [DutyDTO] {
+        guard let url = makeURL("/duties?limit=1000") else { throw URLError (.badURL) }
+        let (response, _): (PaginatedResponse<DutyDTO>, HTTPURLResponse) = try await request(url)
+        return response.data
+    }
+
+    func createDuty(type: String, date: String?, notes: String?, playerId: Int?, matchId: Int?) async throws -> DutyDTO {
+        guard let url = makeURL("/duties") else { throw URLError(.badURL) }
+        let bodyObj = CreateOrUpdateDutyRequest(type: type, date: date, notes: notes, player_id: playerId, match_id: matchId)
+        let bodyData = try JSONEncoder().encode(bodyObj)
+        let (dto, _): (DutyDTO, HTTPURLResponse) = try await request(url, method: "POST", body: bodyData)
+        return dto
+    }
+
+    func updateDuty(id: Int, type: String, date: String?, notes: String?, playerId: Int?, matchId: Int?) async throws -> DutyDTO {
+        guard let url = makeURL("/duties/\(id)") else { throw URLError(.badURL) }
+        let bodyObj = CreateOrUpdateDutyRequest(type: type, date: date, notes: notes, player_id: playerId, match_id: matchId)
+        let bodyData = try JSONEncoder().encode(bodyObj)
+        let (dto, _): (DutyDTO, HTTPURLResponse) = try await request(url, method: "PUT", body: bodyData)
+        return dto
+    }
+
+    func deleteDuty(id: Int) async throws {
+        guard let url = makeURL("/duties/\(id)") else { throw URLError(.badURL) }
         _ = try await requestNoResponse(url)
     }
 }

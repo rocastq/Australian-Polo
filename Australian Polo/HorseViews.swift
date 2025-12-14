@@ -27,6 +27,9 @@ struct HorseListView: View {
                 }
                 .onDelete(perform: deleteHorses)
             }
+            .refreshable {
+                await refreshHorses()
+            }
             .navigationTitle("Horses")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -106,6 +109,39 @@ struct HorseListView: View {
             }
         }
     }
+
+    private func refreshHorses() async {
+        do {
+            let horseDTOs = try await ApiService.shared.getAllHorses()
+
+            await MainActor.run {
+                for dto in horseDTOs {
+                    if let existing = horses.first(where: { $0.backendId == dto.id }) {
+                        // Update existing horse
+                        existing.name = dto.name
+                        if let pedigreeInfo = dto.pedigree?["info"] {
+                            existing.pedigree = pedigreeInfo
+                        }
+                    } else {
+                        // Insert new horse
+                        let newHorse = Horse(
+                            name: dto.name,
+                            birthDate: Date(),
+                            gender: .gelding,
+                            color: .bay,
+                            pedigree: dto.pedigree?["info"] ?? "",
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newHorse)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh horses: \(error.localizedDescription)"
+            }
+        }
+    }
 }
 
 struct HorseRowView: View {
@@ -146,7 +182,7 @@ struct HorseRowView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 if let owner = horse.owner {
-                    Text("Owner: \(owner.name)")
+                    Text("Owner: \(owner.displayName)")
                         .font(.caption2)
                         .foregroundColor(.blue)
                 }
@@ -214,7 +250,7 @@ struct AddHorseView: View {
                     Picker("Owner", selection: $selectedOwner) {
                         Text("No Owner").tag(Player?.none)
                         ForEach(players.filter { $0.isActive }, id: \.id) { player in
-                            Text(player.name).tag(Player?.some(player))
+                            Text(player.displayName).tag(Player?.some(player))
                         }
                     }
                 }
@@ -301,9 +337,9 @@ struct HorseDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var newAward = ""
     @State private var showingAddAward = false
-    @State private var isSyncing = false
-    @State private var syncMessage: String?
-    @State private var showingSyncAlert = false
+    @State private var saveState: SaveState = .idle
+    @State private var saveMessage: String = ""
+    @State private var showingSaveAlert = false
 
     var body: some View {
         Form {
@@ -327,21 +363,6 @@ struct HorseDetailView: View {
                     .lineLimit(3...6)
 
                 Toggle("Active Horse", isOn: $horse.isActive)
-            }
-
-            if horse.backendId != nil {
-                Section {
-                    Button(action: syncToBackend) {
-                        HStack {
-                            if isSyncing {
-                                ProgressView()
-                                    .padding(.trailing, 8)
-                            }
-                            Text(isSyncing ? "Syncing..." : "Sync to Backend")
-                        }
-                    }
-                    .disabled(isSyncing)
-                }
             }
 
             Section(header: Text("Details")) {
@@ -370,7 +391,7 @@ struct HorseDetailView: View {
                 )) {
                     Text("No Owner").tag(Player?.none)
                     ForEach(allPlayers.filter { $0.isActive }, id: \.id) { player in
-                        Text(player.name).tag(Player?.some(player))
+                        Text(player.displayName).tag(Player?.some(player))
                     }
                 }
             }
@@ -436,6 +457,27 @@ struct HorseDetailView: View {
         }
         .navigationTitle(horse.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if horse.backendId != nil {
+                    Button(action: saveToBackend) {
+                        switch saveState {
+                        case .idle:
+                            Label("Save", systemImage: "square.and.arrow.up")
+                        case .saving:
+                            ProgressView()
+                        case .success:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        case .error:
+                            Image(systemName: "exclamation.circle.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+                    .disabled(saveState == .saving)
+                }
+            }
+        }
         .alert("Add Award", isPresented: $showingAddAward) {
             TextField("Award Name", text: $newAward)
             Button("Add") {
@@ -450,21 +492,26 @@ struct HorseDetailView: View {
         } message: {
             Text("Enter the name of the award or achievement.")
         }
-        .alert("Sync Status", isPresented: $showingSyncAlert) {
+        .alert("Save Status", isPresented: $showingSaveAlert) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text(syncMessage ?? "")
+            Text(saveMessage)
+        }
+        .onChange(of: saveState) { oldValue, newValue in
+            if case .success = newValue {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    if case .success = saveState {
+                        saveState = .idle
+                    }
+                }
+            }
         }
     }
 
-    private func syncToBackend() {
-        guard let backendId = horse.backendId else {
-            syncMessage = "Cannot sync: Horse not linked to backend"
-            showingSyncAlert = true
-            return
-        }
+    private func saveToBackend() {
+        guard let backendId = horse.backendId else { return }
 
-        isSyncing = true
+        saveState = .saving
         Task {
             do {
                 let pedigreeDict: [String: String]? = horse.pedigree.isEmpty ? nil : ["info": horse.pedigree]
@@ -477,15 +524,15 @@ struct HorseDetailView: View {
                 )
 
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Horse synced successfully"
-                    showingSyncAlert = true
+                    saveState = .success
+                    saveMessage = "Horse saved successfully"
+                    showingSaveAlert = true
                 }
             } catch {
                 await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Sync failed: \(error.localizedDescription)"
-                    showingSyncAlert = true
+                    saveState = .error(error.localizedDescription)
+                    saveMessage = "Save failed: \(error.localizedDescription)"
+                    showingSaveAlert = true
                 }
             }
         }

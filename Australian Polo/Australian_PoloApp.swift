@@ -30,7 +30,19 @@ struct Australian_PoloApp: App {
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // If migration fails, delete the old database and try again
+            print("⚠️ ModelContainer creation failed: \(error)")
+            print("🗑️ Attempting to delete old database and recreate...")
+
+            // Get the default store URL
+            let url = URL.applicationSupportDirectory.appending(path: "default.store")
+            try? FileManager.default.removeItem(at: url)
+
+            do {
+                return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            } catch {
+                fatalError("Could not create ModelContainer even after deleting old database: \(error)")
+            }
         }
     }()
 

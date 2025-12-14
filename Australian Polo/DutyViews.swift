@@ -84,7 +84,7 @@ struct DutyRowView: View {
             }
             
             if let player = duty.player {
-                Text("Assigned to: \(player.name)")
+                Text("Assigned to: \(player.displayName)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             } else {
@@ -151,7 +151,7 @@ struct AddDutyView: View {
                     Picker("Player", selection: $selectedPlayer) {
                         Text("No Player Assigned").tag(Player?.none)
                         ForEach(players.filter { $0.isActive }, id: \.id) { player in
-                            Text(player.name).tag(Player?.some(player))
+                            Text(player.displayName).tag(Player?.some(player))
                         }
                     }
                     
@@ -219,7 +219,7 @@ struct DutyDetailView: View {
                 )) {
                     Text("No Player Assigned").tag(Player?.none)
                     ForEach(allPlayers.filter { $0.isActive }, id: \.id) { player in
-                        Text(player.name).tag(Player?.some(player))
+                        Text(player.displayName).tag(Player?.some(player))
                     }
                 }
                 

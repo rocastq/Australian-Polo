@@ -31,6 +31,8 @@ struct ClubListView: View {
     @State private var showingAddField = false
     @State private var showingAddHorse = false
     @State private var selectedMode: ClubViewMode = .clubs
+    @State private var errorMessage: String?
+    @State private var isLoading = false
 
     var body: some View {
         NavigationView {
@@ -55,6 +57,9 @@ struct ClubListView: View {
                         }
                         .onDelete(perform: deleteClubs)
                     }
+                    .refreshable {
+                        await refreshClubs()
+                    }
 
                 case .players:
                     List {
@@ -64,6 +69,9 @@ struct ClubListView: View {
                             }
                         }
                         .onDelete(perform: deletePlayers)
+                    }
+                    .refreshable {
+                        await refreshPlayers()
                     }
 
                 case .teams:
@@ -75,6 +83,9 @@ struct ClubListView: View {
                         }
                         .onDelete(perform: deleteTeams)
                     }
+                    .refreshable {
+                        await refreshTeams()
+                    }
 
                 case .fields:
                     List {
@@ -85,6 +96,9 @@ struct ClubListView: View {
                         }
                         .onDelete(perform: deleteFields)
                     }
+                    .refreshable {
+                        await refreshFields()
+                    }
 
                 case .horses:
                     List {
@@ -94,6 +108,9 @@ struct ClubListView: View {
                             }
                         }
                         .onDelete(perform: deleteHorses)
+                    }
+                    .refreshable {
+                        await refreshHorses()
                     }
                 }
             }
@@ -127,6 +144,46 @@ struct ClubListView: View {
             }
             .sheet(isPresented: $showingAddHorse) {
                 AddHorseView()
+            }
+            .onAppear {
+                // Fetch data when view appears (only if not already loaded)
+                if players.isEmpty || teams.isEmpty || horses.isEmpty {
+                    isLoading = true
+                    Task {
+                        print("🔄 ClubListView appeared, fetching data for all tabs...")
+                        await refreshClubs()
+                        await refreshPlayers()
+                        await refreshTeams()
+                        await refreshFields()
+                        await refreshHorses()
+                        await MainActor.run {
+                            isLoading = false
+                        }
+                        print("✅ ClubListView finished initial data fetch")
+                    }
+                }
+            }
+            .overlay {
+                if isLoading {
+                    ZStack {
+                        Color.black.opacity(0.3)
+                        VStack {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                            Text("Loading data...")
+                                .foregroundColor(.white)
+                                .padding()
+                        }
+                    }
+                    .ignoresSafeArea()
+                }
+            }
+            .alert("Error", isPresented: .constant(errorMessage != nil)) {
+                Button("OK") { errorMessage = nil }
+            } message: {
+                if let error = errorMessage {
+                    Text(error)
+                }
             }
         }
     }
@@ -189,6 +246,198 @@ struct ClubListView: View {
             for index in offsets {
                 let horse = horses.filter { $0.isActive }[index]
                 horse.isActive = false
+            }
+        }
+    }
+
+    // MARK: - Refresh Functions
+
+    private func refreshClubs() async {
+        do {
+            let clubDTOs = try await ApiService.shared.getAllClubs()
+
+            await MainActor.run {
+                for dto in clubDTOs {
+                    if let existing = clubs.first(where: { $0.backendId == dto.id }) {
+                        // Update existing club
+                        existing.name = dto.name
+                        existing.location = dto.location ?? existing.location
+                        if let foundedDateStr = dto.foundedDate, let foundedDate = Date.apiDate(from: foundedDateStr) {
+                            existing.foundedDate = foundedDate
+                        }
+                    } else {
+                        // Insert new club
+                        var foundedDate = Date()
+                        if let foundedDateStr = dto.foundedDate, let parsed = Date.apiDate(from: foundedDateStr) {
+                            foundedDate = parsed
+                        }
+                        let newClub = Club(
+                            name: dto.name,
+                            location: dto.location ?? "",
+                            foundedDate: foundedDate,
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newClub)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh clubs: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshPlayers() async {
+        do {
+            print("🔄 [ClubViews] Fetching players from API...")
+            let playerDTOs = try await ApiService.shared.getAllPlayers()
+            print("✅ [ClubViews] Received \(playerDTOs.count) players from API")
+
+            await MainActor.run {
+                var newCount = 0
+                var updateCount = 0
+
+                for dto in playerDTOs {
+                    if let existing = players.first(where: { $0.backendId == dto.id }) {
+                        // Update existing player with all backend fields
+                        existing.firstName = dto.firstName
+                        existing.surname = dto.surname
+                        existing.state = dto.state.flatMap { AustralianState(rawValue: $0) }
+                        existing.handicapJun2025 = dto.handicapJun2025
+                        existing.womensHandicapJun2025 = dto.womensHandicapJun2025
+                        existing.handicapDec2026 = dto.handicapDec2026
+                        existing.womensHandicapDec2026 = dto.womensHandicapDec2026
+                        existing.position = dto.position
+                        updateCount += 1
+                    } else {
+                        // Insert new player
+                        let newPlayer = Player(
+                            firstName: dto.firstName,
+                            surname: dto.surname,
+                            state: dto.state.flatMap { AustralianState(rawValue: $0) },
+                            handicapJun2025: dto.handicapJun2025,
+                            backendId: dto.id
+                        )
+                        newPlayer.womensHandicapJun2025 = dto.womensHandicapJun2025
+                        newPlayer.handicapDec2026 = dto.handicapDec2026
+                        newPlayer.womensHandicapDec2026 = dto.womensHandicapDec2026
+                        newPlayer.position = dto.position
+                        modelContext.insert(newPlayer)
+                        newCount += 1
+                    }
+                }
+
+                print("✅ [ClubViews] Players: \(newCount) created, \(updateCount) updated. Total in DB: \(players.count)")
+                print("📊 [ClubViews] Active players: \(players.filter { $0.isActive }.count)")
+
+                // Explicitly save the context
+                do {
+                    try modelContext.save()
+                    print("💾 [ClubViews] Context saved successfully")
+                } catch {
+                    print("❌ [ClubViews] Failed to save context: \(error)")
+                }
+            }
+        } catch {
+            print("❌ [ClubViews] Error refreshing players: \(error)")
+            await MainActor.run {
+                errorMessage = "Failed to refresh players: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshTeams() async {
+        do {
+            let teamDTOs = try await ApiService.shared.getAllTeams()
+
+            await MainActor.run {
+                for dto in teamDTOs {
+                    if let existing = teams.first(where: { $0.backendId == dto.id }) {
+                        // Update existing team
+                        existing.name = dto.name
+                    } else {
+                        // Insert new team
+                        let newTeam = Team(
+                            name: dto.name,
+                            grade: .medium,
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newTeam)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh teams: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshFields() async {
+        do {
+            let fieldDTOs = try await ApiService.shared.getAllFields()
+
+            await MainActor.run {
+                for dto in fieldDTOs {
+                    if let existing = fields.first(where: { $0.backendId == dto.id }) {
+                        // Update existing field
+                        existing.name = dto.name
+                        existing.location = dto.location ?? existing.location
+                        if let gradeStr = dto.grade, let grade = TournamentGrade(rawValue: gradeStr) {
+                            existing.grade = grade
+                        }
+                    } else {
+                        // Insert new field
+                        let grade: TournamentGrade
+                        if let gradeStr = dto.grade, let parsed = TournamentGrade(rawValue: gradeStr) {
+                            grade = parsed
+                        } else {
+                            grade = .medium
+                        }
+                        let newField = Field(
+                            name: dto.name,
+                            location: dto.location ?? "",
+                            grade: grade,
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newField)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh fields: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshHorses() async {
+        do {
+            let horseDTOs = try await ApiService.shared.getAllHorses()
+
+            await MainActor.run {
+                for dto in horseDTOs {
+                    if let existing = horses.first(where: { $0.backendId == dto.id }) {
+                        // Update existing horse
+                        existing.name = dto.name
+                    } else {
+                        // Insert new horse
+                        let newHorse = Horse(
+                            name: dto.name,
+                            birthDate: Date(),
+                            gender: .gelding,
+                            color: .bay,
+                            pedigree: dto.pedigree?["info"] ?? "",
+                            backendId: dto.id
+                        )
+                        modelContext.insert(newHorse)
+                    }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to refresh horses: \(error.localizedDescription)"
             }
         }
     }
