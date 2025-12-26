@@ -388,6 +388,7 @@ final class Match {
     var awayScore: Int
     var result: MatchResult
     var notes: String
+    var currentChukka: Int // Current chukka for live match tracking
 
     // Relationships
     @Relationship(deleteRule: .nullify, inverse: \Team.homeMatches) var homeTeam: Team?
@@ -405,6 +406,7 @@ final class Match {
         self.awayScore = 0
         self.result = .pending
         self.notes = ""
+        self.currentChukka = 1
         self.homeTeam = homeTeam
         self.awayTeam = awayTeam
     }
