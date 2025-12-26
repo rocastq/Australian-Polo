@@ -384,6 +384,7 @@ final class Match {
     var id: UUID
     var backendId: Int? // Backend database ID for syncing
     var date: Date
+    var originalDate: Date? // For tracking time changes
     var homeScore: Int
     var awayScore: Int
     var result: MatchResult
@@ -402,6 +403,7 @@ final class Match {
         self.id = UUID()
         self.backendId = backendId
         self.date = date
+        self.originalDate = date
         self.homeScore = 0
         self.awayScore = 0
         self.result = .pending
@@ -409,6 +411,13 @@ final class Match {
         self.currentChukka = 1
         self.homeTeam = homeTeam
         self.awayTeam = awayTeam
+    }
+
+    // Check if match should be auto-concluded
+    var shouldAutoConclude: Bool {
+        guard let startTime = matchStartTime else { return false }
+        let twoHoursLater = startTime.addingTimeInterval(2 * 60 * 60) // 2 hours
+        return Date() >= twoHoursLater
     }
 }
 

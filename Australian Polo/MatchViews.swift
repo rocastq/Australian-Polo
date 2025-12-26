@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 // MARK: - Match List View
 
@@ -396,6 +397,8 @@ struct MatchDetailView: View {
     @State private var saveState: SaveState = .idle
     @State private var saveMessage: String = ""
     @State private var showingSaveAlert = false
+    @State private var previousDate: Date?
+    @State private var showingConcludeConfirmation = false
 
     // Helper bindings to avoid type-checker complexity
     private var homeTeamBinding: Binding<Team?> {
@@ -470,11 +473,70 @@ struct MatchDetailView: View {
                 .foregroundColor(.blue)
             }
 
-            Picker("Result", selection: $match.result) {
-                ForEach(MatchResult.allCases, id: \.self) { result in
-                    Text(result.rawValue).tag(result)
+            HStack {
+                Text("Result")
+                Spacer()
+                Text(match.result.rawValue)
+                    .foregroundColor(resultColor(for: match.result))
+            }
+        }
+    }
+
+    private var matchStatusSection: some View {
+        Section(header: Text("Match Status")) {
+            if match.result == .pending {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let startTime = match.matchStartTime {
+                        HStack {
+                            Text("Match Started:")
+                            Spacer()
+                            Text(startTime.formatted(date: .omitted, time: .shortened))
+                                .foregroundColor(.secondary)
+                        }
+
+                        if match.shouldAutoConclude {
+                            Text("Match will auto-conclude (2 hours elapsed)")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    } else {
+                        Text("Match not started yet")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Button(action: {
+                        showingConcludeConfirmation = true
+                    }) {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("Conclude Match")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                HStack {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundColor(.green)
+                    Text("Match Concluded")
+                        .fontWeight(.semibold)
                 }
             }
+        }
+    }
+
+    private func resultColor(for result: MatchResult) -> Color {
+        switch result {
+        case .win: return .green
+        case .loss: return .red
+        case .draw: return .orange
+        case .pending: return .blue
         }
     }
 
@@ -566,12 +628,27 @@ struct MatchDetailView: View {
         Form {
             matchInformationSection
             scoreSection
+            matchStatusSection
             associationsSection
             dutiesSection
             participationsSection
         }
         .navigationTitle("Match Details")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            previousDate = match.date
+        }
+        .onChange(of: match.date) { oldValue, newValue in
+            checkDateChange(oldDate: oldValue, newDate: newValue)
+        }
+        .confirmationDialog("Conclude Match", isPresented: $showingConcludeConfirmation) {
+            Button("Conclude as \(predictedResult())", role: .destructive) {
+                concludeMatch()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This will finalize the match result based on the current score: \(match.homeTeam?.name ?? "Home") \(match.homeScore) - \(match.awayScore) \(match.awayTeam?.name ?? "Away")")
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 12) {
@@ -670,6 +747,55 @@ struct MatchDetailView: View {
                 let participation = match.participations[index]
                 modelContext.delete(participation)
             }
+        }
+    }
+
+    private func predictedResult() -> String {
+        if match.homeScore > match.awayScore {
+            return "Win"
+        } else if match.awayScore > match.homeScore {
+            return "Loss"
+        } else {
+            return "Draw"
+        }
+    }
+
+    private func concludeMatch() {
+        if match.homeScore > match.awayScore {
+            match.result = .win
+        } else if match.awayScore > match.homeScore {
+            match.result = .loss
+        } else {
+            match.result = .draw
+        }
+    }
+
+    private func checkDateChange(oldDate: Date, newDate: Date) {
+        // Check if the date actually changed (more than 1 minute difference)
+        let timeDifference = abs(newDate.timeIntervalSince(oldDate))
+        if timeDifference > 60 { // More than 1 minute difference
+            sendMatchTimeChangeNotification(oldDate: oldDate, newDate: newDate)
+            match.originalDate = oldDate // Update original date for reference
+        }
+    }
+
+    private func sendMatchTimeChangeNotification(oldDate: Date, newDate: Date) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            guard granted else { return }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Match Time Changed"
+            content.body = """
+            \(match.homeTeam?.name ?? "Home") vs \(match.awayTeam?.name ?? "Away")
+            From: \(oldDate.formatted(date: .abbreviated, time: .shortened))
+            To: \(newDate.formatted(date: .abbreviated, time: .shortened))
+            """
+            content.sound = .default
+
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
+
+            UNUserNotificationCenter.current().add(request)
         }
     }
 }
