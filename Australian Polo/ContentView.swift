@@ -143,6 +143,14 @@ private struct HomeDashboardView: View {
     @Query(sort: \Match.date, order: .reverse) private var matches: [Match]
     @Query private var players: [Player]
     
+    private var ongoingMatches: [Match] {
+        // Consider a match "ongoing" if it's pending and has a score or is in chukka > 1
+        matches.filter { match in
+            match.result == .pending &&
+            (match.homeScore > 0 || match.awayScore > 0 || match.currentChukka > 1)
+        }
+    }
+
     private var upcomingTournaments: [Tournament] {
         let now = Date()
         return Array(tournaments
@@ -150,11 +158,11 @@ private struct HomeDashboardView: View {
             .sorted { $0.startDate < $1.startDate }
             .prefix(3))
     }
-    
+
     private var recentMatches: [Match] {
         Array(matches.prefix(5))
     }
-    
+
     private var topPlayers: [Player] {
         Array(players
             .filter { $0.isActive }
@@ -196,8 +204,30 @@ private struct HomeDashboardView: View {
                 }
                 
                 .padding(.horizontal)
-                
-                
+
+
+                // Ongoing Matches
+                if !ongoingMatches.isEmpty {
+                    SectionCard(title: "Live Matches",
+                                icon: "play.circle.fill",
+                                accent: .red,
+                                seeAllTitle: nil,
+                                onSeeAll: nil) {
+                        VStack(spacing: 12) {
+                            ForEach(ongoingMatches, id: \.id) { match in
+                                NavigationLink {
+                                    MatchControlView(match: match)
+                                } label: {
+                                    OngoingMatchCard(match: match)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+
                 // Upcoming Tournaments
                 SectionCard(title: "Upcoming Tournaments",
                             icon: "calendar",
@@ -543,6 +573,103 @@ private struct EmptyHint: View {
             Spacer()
         }
         .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Ongoing Match Card
+
+private struct OngoingMatchCard: View {
+    let match: Match
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header with tournament and chukka
+            HStack {
+                if let tournament = match.tournament {
+                    Text(tournament.name)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.fill")
+                        .font(.caption2)
+                    Text("Chukka \(match.currentChukka)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.green.opacity(0.2))
+                .foregroundColor(.green)
+                .cornerRadius(8)
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            // Score display
+            HStack(spacing: 16) {
+                // Home team
+                VStack(spacing: 8) {
+                    Text(match.homeTeam?.name ?? "Home")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    Text("\(match.homeScore)")
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundColor(.blue)
+                }
+                .frame(maxWidth: .infinity)
+
+                Text(":")
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundColor(.secondary)
+
+                // Away team
+                VStack(spacing: 8) {
+                    Text(match.awayTeam?.name ?? "Away")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    Text("\(match.awayScore)")
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundColor(.orange)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+
+            // Live indicator
+            HStack {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 8, height: 8)
+                Text("LIVE")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.red)
+                Spacer()
+                if let field = match.field {
+                    Text(field.name)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 12)
+        }
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.green.opacity(0.3), lineWidth: 2)
+        )
     }
 }
 

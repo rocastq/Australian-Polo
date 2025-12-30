@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 // MARK: - Match List View
 
@@ -396,6 +397,8 @@ struct MatchDetailView: View {
     @State private var saveState: SaveState = .idle
     @State private var saveMessage: String = ""
     @State private var showingSaveAlert = false
+    @State private var previousDate: Date?
+    @State private var showingConcludeConfirmation = false
 
     // Helper bindings to avoid type-checker complexity
     private var homeTeamBinding: Binding<Team?> {
@@ -470,11 +473,70 @@ struct MatchDetailView: View {
                 .foregroundColor(.blue)
             }
 
-            Picker("Result", selection: $match.result) {
-                ForEach(MatchResult.allCases, id: \.self) { result in
-                    Text(result.rawValue).tag(result)
+            HStack {
+                Text("Result")
+                Spacer()
+                Text(match.result.rawValue)
+                    .foregroundColor(resultColor(for: match.result))
+            }
+        }
+    }
+
+    private var matchStatusSection: some View {
+        Section(header: Text("Match Status")) {
+            if match.result == .pending {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let startTime = match.matchStartTime {
+                        HStack {
+                            Text("Match Started:")
+                            Spacer()
+                            Text(startTime.formatted(date: .omitted, time: .shortened))
+                                .foregroundColor(.secondary)
+                        }
+
+                        if match.shouldAutoConclude {
+                            Text("Match will auto-conclude (2 hours elapsed)")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    } else {
+                        Text("Match not started yet")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Button(action: {
+                        showingConcludeConfirmation = true
+                    }) {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("Conclude Match")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                HStack {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundColor(.green)
+                    Text("Match Concluded")
+                        .fontWeight(.semibold)
                 }
             }
+        }
+    }
+
+    private func resultColor(for result: MatchResult) -> Color {
+        switch result {
+        case .win: return .green
+        case .loss: return .red
+        case .draw: return .orange
+        case .pending: return .blue
         }
     }
 
@@ -566,18 +628,38 @@ struct MatchDetailView: View {
         Form {
             matchInformationSection
             scoreSection
+            matchStatusSection
             associationsSection
             dutiesSection
             participationsSection
         }
         .navigationTitle("Match Details")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            previousDate = match.date
+        }
+        .onChange(of: match.date) { oldValue, newValue in
+            checkDateChange(oldDate: oldValue, newDate: newValue)
+        }
+        .confirmationDialog("Conclude Match", isPresented: $showingConcludeConfirmation) {
+            Button("Conclude as \(predictedResult())", role: .destructive) {
+                concludeMatch()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This will finalize the match result based on the current score: \(match.homeTeam?.name ?? "Home") \(match.homeScore) - \(match.awayScore) \(match.awayTeam?.name ?? "Away")")
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack {
+                HStack(spacing: 12) {
+                    NavigationLink(destination: MatchControlView(match: match)) {
+                        Label("Match Control", systemImage: "sportscourt.fill")
+                    }
+
                     Button("Edit Score") {
                         showingScoreEntry = true
                     }
+
                     if match.backendId != nil {
                         Button(action: saveToBackend) {
                             switch saveState {
@@ -667,6 +749,55 @@ struct MatchDetailView: View {
             }
         }
     }
+
+    private func predictedResult() -> String {
+        if match.homeScore > match.awayScore {
+            return "Win"
+        } else if match.awayScore > match.homeScore {
+            return "Loss"
+        } else {
+            return "Draw"
+        }
+    }
+
+    private func concludeMatch() {
+        if match.homeScore > match.awayScore {
+            match.result = .win
+        } else if match.awayScore > match.homeScore {
+            match.result = .loss
+        } else {
+            match.result = .draw
+        }
+    }
+
+    private func checkDateChange(oldDate: Date, newDate: Date) {
+        // Check if the date actually changed (more than 1 minute difference)
+        let timeDifference = abs(newDate.timeIntervalSince(oldDate))
+        if timeDifference > 60 { // More than 1 minute difference
+            sendMatchTimeChangeNotification(oldDate: oldDate, newDate: newDate)
+            match.originalDate = oldDate // Update original date for reference
+        }
+    }
+
+    private func sendMatchTimeChangeNotification(oldDate: Date, newDate: Date) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            guard granted else { return }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Match Time Changed"
+            content.body = """
+            \(match.homeTeam?.name ?? "Home") vs \(match.awayTeam?.name ?? "Away")
+            From: \(oldDate.formatted(date: .abbreviated, time: .shortened))
+            To: \(newDate.formatted(date: .abbreviated, time: .shortened))
+            """
+            content.sound = .default
+
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
+
+            UNUserNotificationCenter.current().add(request)
+        }
+    }
 }
 
 // MARK: - Add Player Participation View
@@ -678,7 +809,7 @@ struct AddPlayerParticipationView: View {
     @Query private var allPlayers: [Player]
     @Query private var allHorses: [Horse]
     @State private var searchText = ""
-    @State private var selectedPlayer: Player?
+    @State private var selectedPlayerIDs: Set<UUID> = []
     @State private var selectedTeam: Team?
     @State private var selectedHorse: Horse?
     @State private var goalsScored: Int = 0
@@ -689,11 +820,15 @@ struct AddPlayerParticipationView: View {
     }
 
     var filteredPlayers: [Player] {
+        // Filter out players already added to the match
+        let existingPlayerIDs = Set(match.participations.compactMap { $0.player?.id })
+
         if searchText.isEmpty {
-            return allPlayers.filter { $0.isActive }
+            return allPlayers.filter { $0.isActive && !existingPlayerIDs.contains($0.id) }
         } else {
             return allPlayers.filter { player in
                 player.isActive &&
+                !existingPlayerIDs.contains(player.id) &&
                 player.displayName.localizedCaseInsensitiveContains(searchText)
             }
         }
@@ -712,12 +847,29 @@ struct AddPlayerParticipationView: View {
                 .padding()
                 .background(Color(.systemGroupedBackground))
 
+                // Selection summary
+                if !selectedPlayerIDs.isEmpty {
+                    HStack {
+                        Text("\(selectedPlayerIDs.count) player\(selectedPlayerIDs.count == 1 ? "" : "s") selected")
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                        Spacer()
+                        Button("Clear") {
+                            selectedPlayerIDs.removeAll()
+                        }
+                        .font(.caption)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(Color.blue.opacity(0.1))
+                }
+
                 // Player list with scroll
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(filteredPlayers) { player in
                             Button(action: {
-                                selectedPlayer = player
+                                togglePlayerSelection(player)
                             }) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
@@ -736,13 +888,16 @@ struct AddPlayerParticipationView: View {
                                         }
                                     }
                                     Spacer()
-                                    if selectedPlayer?.id == player.id {
+                                    if selectedPlayerIDs.contains(player.id) {
                                         Image(systemName: "checkmark.circle.fill")
                                             .foregroundColor(.blue)
+                                    } else {
+                                        Image(systemName: "circle")
+                                            .foregroundColor(.gray.opacity(0.3))
                                     }
                                 }
                                 .padding()
-                                .background(selectedPlayer?.id == player.id ? Color.blue.opacity(0.1) : Color.clear)
+                                .background(selectedPlayerIDs.contains(player.id) ? Color.blue.opacity(0.1) : Color.clear)
                             }
                             Divider()
                         }
@@ -750,9 +905,9 @@ struct AddPlayerParticipationView: View {
                 }
 
                 // Stats section
-                if selectedPlayer != nil {
+                if !selectedPlayerIDs.isEmpty {
                     Form {
-                        Section(header: Text("Participation Details")) {
+                        Section(header: Text("Participation Details (applies to all selected players)")) {
                             Picker("Team", selection: $selectedTeam) {
                                 Text("Select Team").tag(Team?.none)
                                 ForEach(availableTeams) { team in
@@ -773,7 +928,7 @@ struct AddPlayerParticipationView: View {
                                 }
                             }
 
-                            Picker("Horse", selection: $selectedHorse) {
+                            Picker("Horse (Optional)", selection: $selectedHorse) {
                                 Text("No Horse").tag(Horse?.none)
                                 ForEach(allHorses.filter { $0.isActive }) { horse in
                                     Text(horse.name).tag(Horse?.some(horse))
@@ -788,7 +943,7 @@ struct AddPlayerParticipationView: View {
                     .frame(height: 280)
                 }
             }
-            .navigationTitle("Add Player")
+            .navigationTitle("Add Players")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -797,29 +952,42 @@ struct AddPlayerParticipationView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Add") {
-                        addParticipation()
+                    Button(selectedPlayerIDs.isEmpty ? "Add" : "Add (\(selectedPlayerIDs.count))") {
+                        addParticipations()
                     }
-                    .disabled(selectedPlayer == nil || selectedTeam == nil)
+                    .disabled(selectedPlayerIDs.isEmpty || selectedTeam == nil)
                 }
             }
         }
     }
 
-    private func addParticipation() {
-        guard let player = selectedPlayer,
-              let team = selectedTeam else { return }
+    private func togglePlayerSelection(_ player: Player) {
+        if selectedPlayerIDs.contains(player.id) {
+            selectedPlayerIDs.remove(player.id)
+        } else {
+            selectedPlayerIDs.insert(player.id)
+        }
+    }
 
-        let participation = MatchParticipation(
-            player: player,
-            horse: selectedHorse,
-            team: team
-        )
-        participation.goalsScored = goalsScored
-        participation.fouls = fouls
-        participation.match = match
+    private func addParticipations() {
+        guard let team = selectedTeam else { return }
 
-        modelContext.insert(participation)
+        // Create participation for each selected player
+        for playerID in selectedPlayerIDs {
+            if let player = allPlayers.first(where: { $0.id == playerID }) {
+                let participation = MatchParticipation(
+                    player: player,
+                    horse: selectedHorse,
+                    team: team
+                )
+                participation.goalsScored = goalsScored
+                participation.fouls = fouls
+                participation.match = match
+
+                modelContext.insert(participation)
+            }
+        }
+
         dismiss()
     }
 }
@@ -918,7 +1086,7 @@ struct ScoreEntryView: View {
         homeTeam.goalsAgainst += awayScore
         awayTeam.goalsFor += awayScore
         awayTeam.goalsAgainst += homeScore
-        
+
         if homeScore > awayScore {
             homeTeam.wins += 1
             awayTeam.losses += 1
@@ -928,6 +1096,535 @@ struct ScoreEntryView: View {
         } else {
             homeTeam.draws += 1
             awayTeam.draws += 1
+        }
+    }
+}
+
+// MARK: - Match Control View
+
+struct Goal: Identifiable, Codable {
+    let id: UUID
+    let playerId: UUID
+    let playerName: String
+    let teamId: UUID
+    let teamName: String
+    let timestamp: Date
+    let isHomeTeam: Bool
+    let chukka: Int
+
+    init(player: Player, team: Team, isHomeTeam: Bool, chukka: Int) {
+        self.id = UUID()
+        self.playerId = player.id
+        self.playerName = player.displayName
+        self.teamId = team.id
+        self.teamName = team.name
+        self.timestamp = Date()
+        self.isHomeTeam = isHomeTeam
+        self.chukka = chukka
+    }
+}
+
+struct MatchControlView: View {
+    @Bindable var match: Match
+    @Environment(\.modelContext) private var modelContext
+    @State private var showingPlayerPicker = false
+    @State private var selectedTeamIsHome: Bool = true
+    @State private var goals: [Goal] = []
+
+    // Chukka tracking
+    @State private var chukkaTimeRemaining: TimeInterval = 420 // 7 minutes in seconds
+    @State private var isTimerRunning: Bool = false
+    @State private var timer: Timer?
+
+    // Use match.currentChukka directly instead of separate state
+    private var currentChukka: Int {
+        get { match.currentChukka }
+        nonmutating set { match.currentChukka = newValue }
+    }
+
+    var homeParticipations: [MatchParticipation] {
+        match.participations.filter { $0.team?.id == match.homeTeam?.id }
+    }
+
+    var awayParticipations: [MatchParticipation] {
+        match.participations.filter { $0.team?.id == match.awayTeam?.id }
+    }
+
+    var timeString: String {
+        let minutes = Int(chukkaTimeRemaining) / 60
+        let seconds = Int(chukkaTimeRemaining) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Scoreboard
+            scoreboardView
+                .padding()
+                .background(Color(.systemGroupedBackground))
+
+            // Chukka Control
+            chukkaControlView
+                .padding()
+                .background(Color(.systemBackground))
+
+            Divider()
+
+            // Goal Buttons
+            goalButtonsView
+                .padding()
+
+            Divider()
+
+            // Goal History
+            goalHistoryView
+        }
+        .navigationTitle("Match Control")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingPlayerPicker) {
+            PlayerGoalPickerView(
+                participations: selectedTeamIsHome ? homeParticipations : awayParticipations,
+                teamName: selectedTeamIsHome ? (match.homeTeam?.name ?? "Home") : (match.awayTeam?.name ?? "Away"),
+                isHomeTeam: selectedTeamIsHome,
+                onPlayerSelected: { participation in
+                    addGoal(for: participation, isHomeTeam: selectedTeamIsHome)
+                }
+            )
+        }
+        .onDisappear {
+            stopTimer()
+        }
+    }
+
+    private var scoreboardView: some View {
+        VStack(spacing: 16) {
+            // Match info
+            VStack(spacing: 4) {
+                if let tournament = match.tournament {
+                    Text(tournament.name)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Text(match.date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            // Score display
+            HStack(spacing: 20) {
+                // Home Team
+                VStack(spacing: 8) {
+                    Text(match.homeTeam?.name ?? "Home")
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                    Text("\(match.homeScore)")
+                        .font(.system(size: 60, weight: .bold))
+                        .foregroundColor(.blue)
+                }
+                .frame(maxWidth: .infinity)
+
+                Text(":")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundColor(.secondary)
+
+                // Away Team
+                VStack(spacing: 8) {
+                    Text(match.awayTeam?.name ?? "Away")
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                    Text("\(match.awayScore)")
+                        .font(.system(size: 60, weight: .bold))
+                        .foregroundColor(.orange)
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            // Result badge
+            Text(match.result.rawValue)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(resultColor(for: match.result))
+                .foregroundColor(.white)
+                .cornerRadius(12)
+        }
+    }
+
+    private var chukkaControlView: some View {
+        VStack(spacing: 12) {
+            // Chukka selector
+            HStack {
+                Text("Chukka")
+                    .font(.headline)
+
+                Spacer()
+
+                // Chukka stepper
+                HStack(spacing: 12) {
+                    Button(action: {
+                        if currentChukka > 1 {
+                            currentChukka -= 1
+                        }
+                    }) {
+                        Image(systemName: "minus.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(currentChukka > 1 ? .blue : .gray)
+                    }
+                    .disabled(currentChukka <= 1)
+
+                    Text("\(currentChukka)")
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .frame(minWidth: 40)
+
+                    Button(action: {
+                        if currentChukka < 8 {
+                            currentChukka += 1
+                        }
+                    }) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(currentChukka < 8 ? .blue : .gray)
+                    }
+                    .disabled(currentChukka >= 8)
+                }
+            }
+
+            // Timer display
+            VStack(spacing: 8) {
+                Text(timeString)
+                    .font(.system(size: 48, weight: .bold, design: .monospaced))
+                    .foregroundColor(chukkaTimeRemaining <= 60 ? .red : .primary)
+
+                // Timer controls
+                HStack(spacing: 16) {
+                    // Start/Pause button
+                    Button(action: {
+                        if isTimerRunning {
+                            pauseTimer()
+                        } else {
+                            startTimer()
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: isTimerRunning ? "pause.circle.fill" : "play.circle.fill")
+                                .font(.title2)
+                            Text(isTimerRunning ? "Pause" : "Start")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(isTimerRunning ? Color.orange : Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+
+                    // Reset button
+                    Button(action: {
+                        resetTimer()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.counterclockwise.circle.fill")
+                                .font(.title2)
+                            Text("Reset")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                }
+            }
+        }
+    }
+
+    private var goalButtonsView: some View {
+        HStack(spacing: 16) {
+            // Home team goal button
+            Button(action: {
+                if !homeParticipations.isEmpty {
+                    selectedTeamIsHome = true
+                    showingPlayerPicker = true
+                }
+            }) {
+                VStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 32))
+                    Text("Add Goal")
+                        .font(.caption)
+                    Text(match.homeTeam?.name ?? "Home")
+                        .font(.caption2)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(homeParticipations.isEmpty ? Color.gray.opacity(0.3) : Color.blue.opacity(0.2))
+                .foregroundColor(homeParticipations.isEmpty ? .gray : .blue)
+                .cornerRadius(12)
+            }
+            .disabled(homeParticipations.isEmpty)
+
+            // Away team goal button
+            Button(action: {
+                if !awayParticipations.isEmpty {
+                    selectedTeamIsHome = false
+                    showingPlayerPicker = true
+                }
+            }) {
+                VStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 32))
+                    Text("Add Goal")
+                        .font(.caption)
+                    Text(match.awayTeam?.name ?? "Away")
+                        .font(.caption2)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(awayParticipations.isEmpty ? Color.gray.opacity(0.3) : Color.orange.opacity(0.2))
+                .foregroundColor(awayParticipations.isEmpty ? .gray : .orange)
+                .cornerRadius(12)
+            }
+            .disabled(awayParticipations.isEmpty)
+        }
+    }
+
+    private var goalHistoryView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Goal History")
+                .font(.headline)
+                .padding(.horizontal)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            if goals.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "sportscourt")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+                    Text("No goals recorded yet")
+                        .foregroundColor(.secondary)
+                    Text("Add players to the match and start recording goals")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            } else {
+                List {
+                    ForEach(goals.reversed()) { goal in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(goal.playerName)
+                                    .font(.headline)
+                                HStack(spacing: 8) {
+                                    Text(goal.teamName)
+                                        .font(.caption)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(goal.isHomeTeam ? Color.blue.opacity(0.2) : Color.orange.opacity(0.2))
+                                        .foregroundColor(goal.isHomeTeam ? .blue : .orange)
+                                        .cornerRadius(4)
+                                    Text("Chukka \(goal.chukka)")
+                                        .font(.caption)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.gray.opacity(0.2))
+                                        .foregroundColor(.secondary)
+                                        .cornerRadius(4)
+                                }
+                            }
+
+                            Spacer()
+
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Image(systemName: "soccerball")
+                                    .foregroundColor(goal.isHomeTeam ? .blue : .orange)
+                                Text(goal.timestamp.formatted(date: .omitted, time: .shortened))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                removeGoal(goal)
+                            } label: {
+                                Label("Undo", systemImage: "arrow.uturn.backward")
+                            }
+                        }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+    }
+
+    private func resultColor(for result: MatchResult) -> Color {
+        switch result {
+        case .win: return .green
+        case .loss: return .red
+        case .draw: return .orange
+        case .pending: return .blue
+        }
+    }
+
+    private func addGoal(for participation: MatchParticipation, isHomeTeam: Bool) {
+        // Update match score
+        if isHomeTeam {
+            match.homeScore += 1
+        } else {
+            match.awayScore += 1
+        }
+
+        // Update player's goals in participation
+        participation.goalsScored += 1
+
+        // Update match result
+        updateMatchResult()
+
+        // Add to goal history
+        if let player = participation.player, let team = participation.team {
+            let goal = Goal(player: player, team: team, isHomeTeam: isHomeTeam, chukka: currentChukka)
+            goals.append(goal)
+        }
+    }
+
+    private func updateMatchResult() {
+        if match.homeScore > match.awayScore {
+            match.result = .win
+        } else if match.awayScore > match.homeScore {
+            match.result = .loss
+        } else if match.homeScore == match.awayScore && (match.homeScore > 0 || match.awayScore > 0) {
+            match.result = .draw
+        } else {
+            match.result = .pending
+        }
+    }
+
+    private func removeGoal(_ goal: Goal) {
+        // Remove from history
+        goals.removeAll { $0.id == goal.id }
+
+        // Update match score
+        if goal.isHomeTeam {
+            match.homeScore = max(0, match.homeScore - 1)
+        } else {
+            match.awayScore = max(0, match.awayScore - 1)
+        }
+
+        // Update player's goals in participation
+        if let participation = match.participations.first(where: { $0.player?.id == goal.playerId }) {
+            participation.goalsScored = max(0, participation.goalsScored - 1)
+        }
+
+        // Update match result
+        updateMatchResult()
+    }
+
+    // MARK: - Timer Functions
+
+    private func startTimer() {
+        isTimerRunning = true
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            if chukkaTimeRemaining > 0 {
+                chukkaTimeRemaining -= 1
+            } else {
+                // Timer reached zero
+                pauseTimer()
+            }
+        }
+    }
+
+    private func pauseTimer() {
+        isTimerRunning = false
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func resetTimer() {
+        pauseTimer()
+        chukkaTimeRemaining = 420 // Reset to 7 minutes
+    }
+
+    private func stopTimer() {
+        pauseTimer()
+        chukkaTimeRemaining = 420
+    }
+}
+
+// MARK: - Player Goal Picker View
+
+struct PlayerGoalPickerView: View {
+    let participations: [MatchParticipation]
+    let teamName: String
+    let isHomeTeam: Bool
+    let onPlayerSelected: (MatchParticipation) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            List {
+                if participations.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "person.2.slash")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("No players added to this team yet")
+                            .foregroundColor(.secondary)
+                        Text("Add players to the match first in the Match Details view")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                } else {
+                    Section(header: Text("Select Player Who Scored")) {
+                        ForEach(participations, id: \.id) { participation in
+                            Button(action: {
+                                onPlayerSelected(participation)
+                                dismiss()
+                            }) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(participation.player?.displayName ?? "Unknown")
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+                                        HStack(spacing: 8) {
+                                            Text("Goals: \(participation.goalsScored)")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                            if let horse = participation.horse {
+                                                Text("• \(horse.name)")
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                    }
+                                    Spacer()
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.title2)
+                                        .foregroundColor(.green)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Add Goal - \(teamName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }
