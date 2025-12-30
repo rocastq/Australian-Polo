@@ -494,14 +494,48 @@ struct MatchDetailView: View {
                                 .foregroundColor(.secondary)
                         }
 
+                        // Calculate auto-conclude time (2 hours after start)
+                        let autoConcludeTime = startTime.addingTimeInterval(2 * 60 * 60)
+
+                        HStack {
+                            Text("Auto-Conclude Time:")
+                            Spacer()
+                            Text(autoConcludeTime.formatted(date: .omitted, time: .shortened))
+                                .foregroundColor(.secondary)
+                        }
+
                         if match.shouldAutoConclude {
-                            Text("Match will auto-conclude (2 hours elapsed)")
-                                .font(.caption)
-                                .foregroundColor(.orange)
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                Text("Match will auto-conclude now (2 hours elapsed)")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            }
+                            .padding(.vertical, 4)
+                        } else {
+                            // Calculate time remaining until auto-conclude
+                            let timeRemaining = autoConcludeTime.timeIntervalSince(Date())
+                            if timeRemaining > 0 {
+                                let hours = Int(timeRemaining) / 3600
+                                let minutes = (Int(timeRemaining) % 3600) / 60
+
+                                HStack {
+                                    Image(systemName: "clock")
+                                        .foregroundColor(.blue)
+                                    Text("Auto-concludes in \(hours)h \(minutes)m")
+                                        .font(.caption)
+                                        .foregroundColor(.blue)
+                                }
+                                .padding(.vertical, 4)
+                            }
                         }
                     } else {
                         Text("Match not started yet")
                             .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Auto-conclude timer starts when match begins")
+                            .font(.caption2)
                             .foregroundColor(.secondary)
                     }
 
@@ -1131,15 +1165,14 @@ struct MatchControlView: View {
     @State private var selectedTeamIsHome: Bool = true
     @State private var goals: [Goal] = []
 
-    // Chukka tracking
-    @State private var chukkaTimeRemaining: TimeInterval = 420 // 7 minutes in seconds
-    @State private var isTimerRunning: Bool = false
+    // Timer tracking - use local state during active timing to avoid constant model updates
     @State private var timer: Timer?
+    @State private var hasNotified30Seconds: Bool = false
+    @State private var currentChukka: Int = 1
+    @State private var chukkaTimeRemaining: TimeInterval = 420
 
-    // Use match.currentChukka directly instead of separate state
-    private var currentChukka: Int {
-        get { match.currentChukka }
-        nonmutating set { match.currentChukka = newValue }
+    private var isTimerRunning: Bool {
+        match.chukkaStartTime != nil
     }
 
     var homeParticipations: [MatchParticipation] {
@@ -1181,6 +1214,7 @@ struct MatchControlView: View {
         }
         .navigationTitle("Match Control")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar) // Hide bottom tab bar
         .sheet(isPresented: $showingPlayerPicker) {
             PlayerGoalPickerView(
                 participations: selectedTeamIsHome ? homeParticipations : awayParticipations,
@@ -1191,8 +1225,24 @@ struct MatchControlView: View {
                 }
             )
         }
+        .onAppear {
+            // Load state from model
+            currentChukka = match.currentChukka
+            chukkaTimeRemaining = match.chukkaTimeRemaining
+            loadGoals()
+            updateTimerFromBackground()
+            if isTimerRunning {
+                startTimer()
+            }
+        }
         .onDisappear {
-            stopTimer()
+            // Save state to model
+            match.currentChukka = currentChukka
+            match.chukkaTimeRemaining = chukkaTimeRemaining
+            saveGoals()
+            // Don't stop the timer - let it run in background via chukkaStartTime
+            timer?.invalidate()
+            timer = nil
         }
     }
 
@@ -1473,6 +1523,11 @@ struct MatchControlView: View {
     }
 
     private func addGoal(for participation: MatchParticipation, isHomeTeam: Bool) {
+        // Set match start time on first goal if not already set
+        if match.matchStartTime == nil {
+            match.matchStartTime = Date()
+        }
+
         // Update match score
         if isHomeTeam {
             match.homeScore += 1
@@ -1483,25 +1538,34 @@ struct MatchControlView: View {
         // Update player's goals in participation
         participation.goalsScored += 1
 
-        // Update match result
-        updateMatchResult()
+        // DON'T auto-update result - keep as pending until manually concluded or auto-concluded
+        checkAutoConclude()
 
         // Add to goal history
         if let player = participation.player, let team = participation.team {
             let goal = Goal(player: player, team: team, isHomeTeam: isHomeTeam, chukka: currentChukka)
             goals.append(goal)
+            saveGoals() // Persist immediately
         }
+
+        // Save current chukka to model when goal is added
+        match.currentChukka = currentChukka
     }
 
-    private func updateMatchResult() {
+    private func concludeMatch() {
+        // Calculate final result based on scores
         if match.homeScore > match.awayScore {
             match.result = .win
         } else if match.awayScore > match.homeScore {
             match.result = .loss
-        } else if match.homeScore == match.awayScore && (match.homeScore > 0 || match.awayScore > 0) {
-            match.result = .draw
         } else {
-            match.result = .pending
+            match.result = .draw
+        }
+    }
+
+    private func checkAutoConclude() {
+        if match.shouldAutoConclude && match.result == .pending {
+            concludeMatch()
         }
     }
 
@@ -1521,26 +1585,105 @@ struct MatchControlView: View {
             participation.goalsScored = max(0, participation.goalsScored - 1)
         }
 
-        // Update match result
-        updateMatchResult()
+        // Check if match should be auto-concluded (but don't auto-update result)
+        checkAutoConclude()
+
+        // Persist changes
+        saveGoals()
+    }
+
+    // MARK: - Goals Persistence
+
+    private func loadGoals() {
+        guard let data = match.goalsData else { return }
+        do {
+            goals = try JSONDecoder().decode([Goal].self, from: data)
+        } catch {
+            print("Failed to decode goals: \(error)")
+            goals = []
+        }
+    }
+
+    private func saveGoals() {
+        do {
+            let data = try JSONEncoder().encode(goals)
+            match.goalsData = data
+        } catch {
+            print("Failed to encode goals: \(error)")
+        }
     }
 
     // MARK: - Timer Functions
 
+    private func updateTimerFromBackground() {
+        guard let startTime = match.chukkaStartTime else { return }
+
+        // Calculate elapsed time since timer started
+        let elapsed = Date().timeIntervalSince(startTime)
+        let newTimeRemaining = max(0, 420 - elapsed)
+
+        chukkaTimeRemaining = newTimeRemaining
+
+        // Reset notification flag if we're back above 30 seconds
+        if newTimeRemaining > 30 {
+            hasNotified30Seconds = false
+        }
+    }
+
     private func startTimer() {
-        isTimerRunning = true
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            if chukkaTimeRemaining > 0 {
-                chukkaTimeRemaining -= 1
-            } else {
-                // Timer reached zero
-                pauseTimer()
+        // Set match start time on first timer start if not already set
+        if match.matchStartTime == nil {
+            match.matchStartTime = Date()
+        }
+
+        // Set chukka start time if not already set, accounting for remaining time
+        if match.chukkaStartTime == nil {
+            // Calculate a virtual start time based on the remaining time
+            let elapsedTime = 420 - chukkaTimeRemaining
+            match.chukkaStartTime = Date().addingTimeInterval(-elapsedTime)
+        }
+
+        hasNotified30Seconds = false
+
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [self] _ in
+            if let startTime = match.chukkaStartTime {
+                let elapsed = Date().timeIntervalSince(startTime)
+                let newTimeRemaining = max(0, 420 - elapsed)
+
+                // Update local state only, not the model
+                chukkaTimeRemaining = newTimeRemaining
+
+                // Check for 30-second warning
+                if newTimeRemaining <= 30 && newTimeRemaining > 0 && !hasNotified30Seconds {
+                    sendNotification()
+                    hasNotified30Seconds = true
+                }
+
+                // Check for auto-conclude
+                checkAutoConclude()
+
+                if newTimeRemaining <= 0 {
+                    // Timer reached zero
+                    pauseTimer()
+                }
             }
         }
     }
 
     private func pauseTimer() {
-        isTimerRunning = false
+        // Update the remaining time based on elapsed time
+        if let startTime = match.chukkaStartTime {
+            let elapsed = Date().timeIntervalSince(startTime)
+            chukkaTimeRemaining = max(0, 420 - elapsed)
+        }
+
+        // Save state to model when pausing
+        match.chukkaTimeRemaining = chukkaTimeRemaining
+        match.currentChukka = currentChukka
+
+        // Clear the start time to indicate timer is paused
+        match.chukkaStartTime = nil
+
         timer?.invalidate()
         timer = nil
     }
@@ -1548,11 +1691,30 @@ struct MatchControlView: View {
     private func resetTimer() {
         pauseTimer()
         chukkaTimeRemaining = 420 // Reset to 7 minutes
+        match.chukkaTimeRemaining = 420
+        hasNotified30Seconds = false
     }
 
-    private func stopTimer() {
-        pauseTimer()
-        chukkaTimeRemaining = 420
+    private func sendNotification() {
+        // Request notification permission
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            guard granted else { return }
+
+            // Create notification content
+            let content = UNMutableNotificationContent()
+            content.title = "Chukka Ending Soon"
+            content.body = "30 seconds remaining in Chukka \(self.currentChukka)"
+            content.sound = .default
+
+            // Trigger immediately
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+
+            // Create request
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
+
+            // Schedule notification
+            UNUserNotificationCenter.current().add(request)
+        }
     }
 }
 

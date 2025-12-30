@@ -16,6 +16,41 @@ enum ClubViewMode: String, CaseIterable {
     case horses = "Horses"
 }
 
+enum ClubSortOption: String, CaseIterable {
+    case nameAsc = "Name (A-Z)"
+    case nameDesc = "Name (Z-A)"
+    case dateNewest = "Newest First"
+    case dateOldest = "Oldest First"
+}
+
+enum PlayerSortOption: String, CaseIterable {
+    case nameAsc = "Name (A-Z)"
+    case nameDesc = "Name (Z-A)"
+    case handicapHigh = "Handicap (High-Low)"
+    case handicapLow = "Handicap (Low-High)"
+    case gamesPlayed = "Games Played"
+}
+
+enum TeamSortOption: String, CaseIterable {
+    case nameAsc = "Name (A-Z)"
+    case nameDesc = "Name (Z-A)"
+    case wins = "Most Wins"
+    case goalDiff = "Goal Difference"
+}
+
+enum FieldSortOption: String, CaseIterable {
+    case nameAsc = "Name (A-Z)"
+    case nameDesc = "Name (Z-A)"
+    case location = "Location"
+}
+
+enum HorseSortOption: String, CaseIterable {
+    case nameAsc = "Name (A-Z)"
+    case nameDesc = "Name (Z-A)"
+    case age = "Age"
+    case gamesPlayed = "Games Played"
+}
+
 // MARK: - Club List View
 
 struct ClubListView: View {
@@ -34,6 +69,65 @@ struct ClubListView: View {
     @State private var errorMessage: String?
     @State private var isLoading = false
 
+    // Search and sorting
+    @State private var searchText = ""
+    @State private var clubSort: ClubSortOption = .nameAsc
+    @State private var playerSort: PlayerSortOption = .nameAsc
+    @State private var teamSort: TeamSortOption = .nameAsc
+    @State private var fieldSort: FieldSortOption = .nameAsc
+    @State private var horseSort: HorseSortOption = .nameAsc
+
+    // Filtered and sorted data
+    private var filteredClubs: [Club] {
+        let filtered = clubs.filter { $0.isActive && (searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText)) }
+        switch clubSort {
+        case .nameAsc: return filtered.sorted { $0.name < $1.name }
+        case .nameDesc: return filtered.sorted { $0.name > $1.name }
+        case .dateNewest: return filtered.sorted { $0.foundedDate > $1.foundedDate }
+        case .dateOldest: return filtered.sorted { $0.foundedDate < $1.foundedDate }
+        }
+    }
+
+    private var filteredPlayers: [Player] {
+        let filtered = players.filter { $0.isActive && (searchText.isEmpty || $0.displayName.localizedCaseInsensitiveContains(searchText)) }
+        switch playerSort {
+        case .nameAsc: return filtered.sorted { $0.displayName < $1.displayName }
+        case .nameDesc: return filtered.sorted { $0.displayName > $1.displayName }
+        case .handicapHigh: return filtered.sorted { $0.currentHandicap > $1.currentHandicap }
+        case .handicapLow: return filtered.sorted { $0.currentHandicap < $1.currentHandicap }
+        case .gamesPlayed: return filtered.sorted { $0.gamesPlayed > $1.gamesPlayed }
+        }
+    }
+
+    private var filteredTeams: [Team] {
+        let filtered = teams.filter { searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText) }
+        switch teamSort {
+        case .nameAsc: return filtered.sorted { $0.name < $1.name }
+        case .nameDesc: return filtered.sorted { $0.name > $1.name }
+        case .wins: return filtered.sorted { $0.wins > $1.wins }
+        case .goalDiff: return filtered.sorted { $0.goalDifference > $1.goalDifference }
+        }
+    }
+
+    private var filteredFields: [Field] {
+        let filtered = fields.filter { $0.isActive && (searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText) || $0.location.localizedCaseInsensitiveContains(searchText)) }
+        switch fieldSort {
+        case .nameAsc: return filtered.sorted { $0.name < $1.name }
+        case .nameDesc: return filtered.sorted { $0.name > $1.name }
+        case .location: return filtered.sorted { $0.location < $1.location }
+        }
+    }
+
+    private var filteredHorses: [Horse] {
+        let filtered = horses.filter { $0.isActive && (searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText)) }
+        switch horseSort {
+        case .nameAsc: return filtered.sorted { $0.name < $1.name }
+        case .nameDesc: return filtered.sorted { $0.name > $1.name }
+        case .age: return filtered.sorted { $0.age > $1.age }
+        case .gamesPlayed: return filtered.sorted { $0.gamesPlayed > $1.gamesPlayed }
+        }
+    }
+
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -45,12 +139,83 @@ struct ClubListView: View {
                 }
                 .pickerStyle(SegmentedPickerStyle())
                 .padding()
+                .onChange(of: selectedMode) { _, _ in
+                    // Clear search when changing tabs
+                    searchText = ""
+                }
+
+                // Search bar
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                    TextField("Search \(selectedMode.rawValue.lowercased())...", text: $searchText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    if !searchText.isEmpty {
+                        Button(action: {
+                            searchText = ""
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+
+                // Sort picker
+                HStack {
+                    Text("Sort by:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    switch selectedMode {
+                    case .clubs:
+                        Picker("Sort", selection: $clubSort) {
+                            ForEach(ClubSortOption.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    case .players:
+                        Picker("Sort", selection: $playerSort) {
+                            ForEach(PlayerSortOption.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    case .teams:
+                        Picker("Sort", selection: $teamSort) {
+                            ForEach(TeamSortOption.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    case .fields:
+                        Picker("Sort", selection: $fieldSort) {
+                            ForEach(FieldSortOption.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    case .horses:
+                        Picker("Sort", selection: $horseSort) {
+                            ForEach(HorseSortOption.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
 
                 // Content based on mode
                 switch selectedMode {
                 case .clubs:
                     List {
-                        ForEach(clubs.filter { $0.isActive }) { club in
+                        ForEach(filteredClubs) { club in
                             NavigationLink(destination: ClubDetailView(club: club)) {
                                 ClubRowView(club: club)
                             }
@@ -63,7 +228,7 @@ struct ClubListView: View {
 
                 case .players:
                     List {
-                        ForEach(players.filter { $0.isActive }) { player in
+                        ForEach(filteredPlayers) { player in
                             NavigationLink(destination: PlayerDetailView(player: player)) {
                                 PlayerRowView(player: player)
                             }
@@ -76,7 +241,7 @@ struct ClubListView: View {
 
                 case .teams:
                     List {
-                        ForEach(teams) { team in
+                        ForEach(filteredTeams) { team in
                             NavigationLink(destination: TeamDetailView(team: team)) {
                                 TeamRowView(team: team)
                             }
@@ -89,7 +254,7 @@ struct ClubListView: View {
 
                 case .fields:
                     List {
-                        ForEach(fields.filter { $0.isActive }) { field in
+                        ForEach(filteredFields) { field in
                             NavigationLink(destination: FieldDetailView(field: field)) {
                                 FieldRowView(field: field)
                             }
@@ -102,7 +267,7 @@ struct ClubListView: View {
 
                 case .horses:
                     List {
-                        ForEach(horses.filter { $0.isActive }) { horse in
+                        ForEach(filteredHorses) { horse in
                             NavigationLink(destination: HorseDetailView(horse: horse)) {
                                 HorseRowView(horse: horse)
                             }
@@ -191,7 +356,7 @@ struct ClubListView: View {
     private func deleteClubs(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                let club = clubs.filter { $0.isActive }[index]
+                let club = filteredClubs[index]
                 club.isActive = false
             }
         }
@@ -200,7 +365,7 @@ struct ClubListView: View {
     private func deletePlayers(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                let player = players.filter { $0.isActive }[index]
+                let player = filteredPlayers[index]
                 player.isActive = false
             }
         }
@@ -209,7 +374,7 @@ struct ClubListView: View {
     private func deleteTeams(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                let team = teams[index]
+                let team = filteredTeams[index]
 
                 // Call API to delete team if it has a backend ID
                 if let backendId = team.backendId {
@@ -235,7 +400,7 @@ struct ClubListView: View {
     private func deleteFields(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                let field = fields.filter { $0.isActive }[index]
+                let field = filteredFields[index]
                 field.isActive = false
             }
         }
@@ -244,7 +409,7 @@ struct ClubListView: View {
     private func deleteHorses(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                let horse = horses.filter { $0.isActive }[index]
+                let horse = filteredHorses[index]
                 horse.isActive = false
             }
         }
